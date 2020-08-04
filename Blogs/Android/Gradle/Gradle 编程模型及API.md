@@ -11,6 +11,6 @@ Gradle基于Groovy,而Groovy基于Java,最后始终得运行在JVM之上.Gradle�
 
 它们的生命周期节点如下:
 
-//https://github.com/xfhy/Android-Notes
+![Gradle生命周期节点.png](https://i.loli.net/2020/08/04/95PvL46WEKuUoIQ.png)
 
-![Gradle生命周期节点](../../../Images/Android/Gradle生命周期节点.webp)
+![](https://raw.githubusercontent.com/xfhy/Android-Notes/master/Images/Android/Gradle生命周期节点.png)
