@@ -19,7 +19,7 @@ PicGo本体支持如下图床：
 
 下载安装好之后,简单设置一下Github的用于放图床的仓库名,分支,以及token和存储路径(可选).
 
-![](https://raw.githubusercontent.com/xfhy/Android-Notes/master/Images/20200805095819.png)
+![](https://raw.githubusercontent.com/xfhy/Android-Notes/master/Images/PicGo%E8%AE%BE%E7%BD%AE.png)
 
 然后就可以用来上传图片了,上传完成之后会自动将url复制到剪贴板,然后就可以开心的写markdown咯.
 
