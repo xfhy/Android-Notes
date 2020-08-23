@@ -36,7 +36,7 @@
 - [死磕Android_Service启动流程分析(一)](/Blogs/Android/系统源码解析/死磕Android_Service启动流程分析(一).md)
 - [死磕Android_Service绑定流程分析(二)](/Blogs/Android/系统源码解析/死磕Android_Service绑定流程分析(二).md)
 - [死磕Android_BroadcastReceiver_工作过程](/Blogs/Android/系统源码解析/死磕Android_BroadcastReceiver_工作过程.md)
-- [Lifecycle_原理解析](/Android/系统源码解析/Lifecycle_原理解析.md)
+- [Lifecycle_原理解析](/Blogs/Android/系统源码解析/Lifecycle_原理解析.md)
 - [ViewModel_使用及原理解析](/Blogs/Android/系统源码解析/ViewModel_使用及原理解析.md)
 - [Handler机制你需要知道的一切](/Blogs/Android/系统源码解析/Handler机制你需要知道的一切.md)
 - [死磕Android_ContentProvider_启动](/Blogs/Android/系统源码解析/死磕Android_ContentProvider_启动.md)
@@ -56,12 +56,12 @@
 
 ### Gradle
 
-- [Gradle系列_插件练习-动态移除权限](/Blogs/Android/Gradle/Gradle系列_插件练习-动态移除权限.md)
-- [初识Transform_API+ASM](/Blogs/Android/Gradle/初识Transform_API+ASM.md)
+- [Gradle系列(一)_Groovy_基础](/Blogs/Android/Gradle/Gradle系列(一)_Groovy_基础.md)
 - [Gradle系列(二)_Gradle执行顺序和task](/Blogs/Android/Gradle/Gradle系列(二)_Gradle执行顺序和task.md)
 - [Gradle系列(三)_Gradle配置构建和渠道包](/Blogs/Android/Gradle/Gradle系列(三)_Gradle配置构建和渠道包.md)
 - [Gradle系列(四)_Gradle插件](/Blogs/Android/Gradle/Gradle系列(四)_Gradle插件.md)
-- [Gradle系列(一)_Groovy_基础](/Blogs/Android/Gradle/Gradle系列(一)_Groovy_基础.md)
+- [Gradle系列_插件练习-动态移除权限](/Blogs/Android/Gradle/Gradle系列_插件练习-动态移除权限.md)
+- [初识Transform_API+ASM](/Blogs/Android/Gradle/初识Transform_API+ASM.md)
 
 ### NDK
 
