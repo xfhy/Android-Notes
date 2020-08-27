@@ -61,7 +61,7 @@
 - [Gradle系列(三)_Gradle配置构建和渠道包](/Blogs/Android/Gradle/Gradle系列(三)_Gradle配置构建和渠道包.md)
 - [Gradle系列(四)_Gradle插件](/Blogs/Android/Gradle/Gradle系列(四)_Gradle插件.md)
 - [Gradle系列_插件练习-动态移除权限](/Blogs/Android/Gradle/Gradle系列_插件练习-动态移除权限.md)
-- [手把手教大家用Transform API和ASM实现一个防快速点击案例](/Blogs/Android/Gradle/手把手教大家用Transform API和ASM实现一个防快速点击案例.md)
+- [手把手教大家用Transform_API和ASM实现一个防快速点击案例](/Blogs/Android/Gradle/手把手教大家用Transform_API和ASM实现一个防快速点击案例.md)
 
 ### NDK
 
