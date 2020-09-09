@@ -19,8 +19,10 @@
 ## 4. Java
 
 - [ArrayList源码解析](/Blogs/Java/集合/ArrayList源码解析.md)
-- [LinkedList源码解析](/Blogs/Java/集合/LinkedList源码解析.md) 
+- [LinkedList源码解析](/Blogs/Java/集合/LinkedList源码解析.md)
+- [筑基_CopyOnWriteArrayList](/Blogs/Java/集合/筑基_CopyOnWriteArrayList.md) 
 - [从源码角度彻底搞懂String,StringBuffer,StringBuilder_20180420](/Blogs/Java/基础/从源码角度彻底搞懂String,StringBuffer,StringBuilder_20180420.md)
+- [筑基_String](/Blogs/Java/基础/筑基_String.md)
 - [Java字节码(class文件)解读](/Blogs/Java/JVM/Java字节码(class文件)解读.md)
 
 ## 5. Kotlin
