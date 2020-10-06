@@ -32,6 +32,9 @@
 
 - [从源码角度彻底搞懂String,StringBuffer,StringBuilder_20180420](/Blogs/Java/基础/从源码角度彻底搞懂String,StringBuffer,StringBuilder_20180420.md)
 - [String](/Blogs/Java/基础/String.md)
+- [泛型](/Blogs/Java/基础/泛型.md)
+- [异常](/Blogs/Java/基础/异常.md)
+- [反射](/Blogs/Java/基础/反射.md)
 - [Java字节码(class文件)解读](/Blogs/Java/JVM/Java字节码(class文件)解读.md)
 
 ## 5. Kotlin
