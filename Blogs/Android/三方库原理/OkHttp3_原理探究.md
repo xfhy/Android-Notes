@@ -316,13 +316,13 @@ NamedRunnable中使用了模板方法模式,子类必须实现execute方法,并�
 
 开始了,开始了,重点来了,通过getResponseWithInterceptorChain方法这条拦截器链路可以获取到网络请求的结果.然后我们通过CallBack接口回调回调用处.
 
-![image](CCD21A7800B8452AB6AC12181A399B34)
+![](https://raw.githubusercontent.com/xfhy/Android-Notes/master/Images/%E4%BD%A0%E5%BC%80%E5%A7%8B%E4%BA%86.png)
 
 在开始之前,大家先看两张图,这张图是整个拦截器的流程,也是OkHttp的精华,设计之巧妙.
 
-![image](EA43A6F5211946938FBB11DE37BD3942)
+![](https://raw.githubusercontent.com/xfhy/Android-Notes/master/Images/OkHttp%E6%8B%A6%E6%88%AA%E5%99%A8%E6%B5%81%E7%A8%8B.png)
 
-![image](DC27219B687246BC905B442511F36BDC)
+![](https://raw.githubusercontent.com/xfhy/Android-Notes/master/Images/OkHttp%E6%8B%A6%E6%88%AA%E5%99%A8%E4%BB%A3%E7%A0%81%E9%80%BB%E8%BE%91.png)
 
 从上面的代码也可以看到,getResponseWithInterceptorChain方法是获取到了网络请求的最终数据的.紧接着根据我画了两张图,这两张图主要是描绘了从getResponseWithInterceptorChain进去之后发生的事,它内部会串行的执行一些特定的拦截器(interceptors),每个拦截器负责一个特殊的职责.最后那个拦截器负责请求服务器,然后服务器返回了数据再根据这个拦截器的顺序逆序返回回去,最终就得到了网络数据.
 
