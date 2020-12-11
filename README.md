@@ -14,6 +14,8 @@
 
 ## 2. 数据结构与算法
 
+- [打遍天下二叉树](/Blogs/Algorithm/打遍天下二叉树.md)
+
 ## 3. 设计模式
 
 ## 4. Java
@@ -61,6 +63,7 @@
 
 ### 三方库原理
 
+- [LeakCanary_原理探究](/Blogs/Android/三方库原理/LeakCanary_原理探究.md)
 - [OkHttp3_原理探究](/Blogs/Android/三方库原理/OkHttp3_原理探究.md)
 - [Retrofit_原理解析](/Blogs/Android/三方库原理/Retrofit_原理解析.md)
 - [Glide主流程源码解析](/Blogs/Android/三方库原理/Glide主流程源码解析.md)
