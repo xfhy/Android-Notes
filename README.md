@@ -96,4 +96,4 @@
 
 ### 多进程
 
-- [Android_AIDL_跨进程通信](/Blogs/Android/多进程/Android_AIDL_跨进程通信.md)
+- [Android进程间通信: 深入浅出AIDL](/Blogs/Android/多进程/AIDL详解.md)
