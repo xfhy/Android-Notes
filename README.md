@@ -97,3 +97,4 @@
 ### 多进程
 
 - [Android进程间通信: 深入浅出AIDL](/Blogs/Android/多进程/AIDL详解.md)
+- [Android进程间通信: Messenger详解](/Blogs/Android/多进程/Messenger详解.md)
