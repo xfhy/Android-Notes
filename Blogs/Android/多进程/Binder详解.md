@@ -147,7 +147,129 @@ unsigned int flags; | 与交互相关的标志位，其中最重要的是`TF_ONE
 
 ### 5.1 Binder在应用程序中的表述
 
+本文假设应用程序是用面向对象语言实现的.
 
+Binder本质上只是一种底层通信方式,和具体服务没有关系.为了提供具体服务,Server必须提供一套接口函数以便Client通过远程访问使用各种服务.这时通常采用Proxy设计模式: 将接口函数定义在一个抽象类中,Server和Client都会以该抽象类为基类实现所有接口函数,所不同的是Server端是真正的功能实现,而Client端是对这些函数远程调用请求的包装.如何将Binder和Proxy设计模式结合起来是应用程序面向对象Binder通信的根本问题.
+
+#### 5.1.1 Binder在Server端的表述 - Binder实体
+
+作为Proxy设计模式的基础,首先定义一个抽象接口类封装Server所有功能,其中包含一系列纯虚函数留待Server和Proxy各自实现.由于这些函数需要跨进程调用,需为其一一编号,从而Server可以根据收到的编号决定调用哪个函数.其次就要引用Binder了.Server端定义另一个Binder抽象类(我理解就是IXX.Stub)处理来自Client的Binder请求数据包,其中最重要的成员是虚函数onTransact().该函数分析收到的数据包,调用相应的接口函数处理请求.
+
+接下来采用继承方式以接口类和Binder抽象类为基类构建Binder在Server中的实体(我理解就是我们自己继承IXX.Stub写个类,然后onBind返回回去那里),实现基类里所有的虚函数,包括公共接口函数以及数据包处理函数: onTransact() (就是IXX.Stub里面的那个onTransact方法,如果是编写aidl的话,AS会自动生成onTransact方法,不用我们自己实现.当然,onTransact是有规律的,自己实现也是ok的). 这个函数的输入是来自Client的`binder_transaction_data`结构的数据包.前面提到,该结构里有个成员code,包含这次请求的接口函数编号.onTransact()将case-by-case地解析code值,从数据包里取出函数参数,调用接口类中相应的,已经实现的公共接口函数(调用时已经和Server处于同一进程了,这些公共接口函数的实现是在Server端).函数执行完毕,如果需要返回数据就再构建一个`binder_transaction_data`包将返回数据包填入其中.
+
+那么各个Binder实体的onTransact()又是什么时候调用呢? 这就需要驱动参与了. 前面说过,Binder实体须要以Binder传输结构`flat_binder_object`形式发生给其他进程才能建立Binder通信,而Binder实体指针就存放在该结构的handle域中.驱动根据Binder位置数组从传输数据中获取该Binder的传输结构,为它创建位于内核中的Binder节点,将BInder实体指针记录在该节点中.如果接下来有其他进程向该Binder发送数据,驱动会根据节点中记录的信息将Binder实体指针填入`binder_transaction_data`的target.ptr中返回给接收线程.接收线程从数据包中取出该指针,`reinterpret_cast`成Binder抽象类并调用onTransact()函数.由于这是个虚函数,不同的Binder实体中有各自的实现,从而可以调用到不同Binder实体提供的onTransact().  
+
+#### 5.1.2 Binder 在Client端的表述 - Binder引用
+
+作为Proxy设计模式的一部分,Client端的Binder同样要继承Server提供的公共接口类并实现公共函数(IXX.Stub.Proxy).但这不是真正的实现,而是对远程函数调用的包装: 将函数参数打包,通过Binder向Server发送申请并等待返回值.为此Client端还要知道Binder实体的相关信息,即对Binder实体的引用(在onServiceConnected中拿到的).该引用是由ServiceManager转发过来的,对实名Binder的引用或是由另一个进程直接发送过来的对匿名Binder的引用.
+
+举例: 
+
+```java
+private static class Proxy implements com.xfhy.allinone.ipc.aidl.IPersonManager {
+    private android.os.IBinder mRemote;
+
+    Proxy(android.os.IBinder remote) {
+        mRemote = remote;
+    }
+
+    @Override
+    public android.os.IBinder asBinder() {
+        return mRemote;
+    }
+
+    public java.lang.String getInterfaceDescriptor() {
+        return DESCRIPTOR;
+    }
+
+    @Override
+    public java.util.List<com.xfhy.allinone.ipc.aidl.Person> getPersonList() throws android.os.RemoteException {
+        android.os.Parcel _data = android.os.Parcel.obtain();
+        android.os.Parcel _reply = android.os.Parcel.obtain();
+        java.util.List<com.xfhy.allinone.ipc.aidl.Person> _result;
+        try {
+            _data.writeInterfaceToken(DESCRIPTOR);
+            boolean _status = mRemote.transact(Stub.TRANSACTION_getPersonList, _data, _reply, 0);
+            if (!_status && getDefaultImpl() != null) {
+                return getDefaultImpl().getPersonList();
+            }
+            _reply.readException();
+            _result = _reply.createTypedArrayList(com.xfhy.allinone.ipc.aidl.Person.CREATOR);
+        } finally {
+            _reply.recycle();
+            _data.recycle();
+        }
+        return _result;
+    }
+}
+```
+
+由于继承了同样的公共接口类,Client Binder提供了与Server Binder一样的函数原型,使用户感觉不出Server是运行在本地还是远端.Client Binder中,公共接口函数的包装方式是: 创建一个`binder_transaction_data`数据包,将其对应的编码填入code域,将调用该函数所需的参数填入data.buffer指向的缓存中,并指明数据包的目的地,那就是已经获得的对Binder实体的引用,填入数据包的target.handle中.注意这里和Server的区别: 实际上target域是个联合体,包括ptr和handle两个成员,前者用于接收数据包的Server,指向Binder实体对应的内存空间;后者用于作为请求方的Client,存放Binder实体的引用,告知驱动数据包将路由给哪个实体.数据包准备好后,通过驱动接口发送出去.经过`BC_TRANSACTION/BC_REPLY`回合完成函数的远程调用并得到返回值.
+
+### 5.2 Binder在传输数据中的表述
+
+Binder可以塞在数据包的有效数据中越进程边界从一个进程传递给另一个进程,这些传输中的Binder用结构`flat_binder_object`表示,如下表所示:
+
+<div style="width: 150pt">成员</div> | 含义
+---|---
+unsigned long type | 表明该Binder的类型，包括以下几种：BINDER_TYPE_BINDER：表示传递的是Binder实体，并且指向该实体的引用都是强类型；BINDER_TYPE_WEAK_BINDER：表示传递的是Binder实体，并且指向该实体的引用都是弱类型；BINDER_TYPE_HANDLE：表示传递的是Binder强类型的引用;BINDER_TYPE_WEAK_HANDLE：表示传递的是Binder弱类型的引用;BINDER_TYPE_FD：表示传递的是文件形式的Binder，详见下节.
+unsigned long flags | 该域只对第一次传递Binder实体时有效，因为此刻驱动需要在内核中创建相应的实体节点，有些参数需要从该域取出：第0-7位：代码中用FLAT_BINDER_FLAG_PRIORITY_MASK取得，表示处理本实体请求数据包的线程的最低优先级。当一个应用程序提供多个实体时，可以通过该参数调整分配给各个实体的处理能力。第8位：代码中用FLAT_BINDER_FLAG_ACCEPTS_FDS取得，置1表示该实体可以接收其它进程发过来的文件形式的Binder。由于接收文件形式的Binder会在本进程中自动打开文件，有些Server可以用该标志禁止该功能，以防打开过多文件。
+union {void *binder;signed long handle;}; | 当传递的是Binder实体时使用binder域，指向Binder实体在应用程序中的地址。当传递的是Binder引用时使用handle域，存放Binder在进程中的引用号。
+void *cookie; | 该域只对Binder实体有效，存放与该Binder有关的附加信息。
+
+无论是Binder实体还是对实体的引用都从属于某个进程,所以该结构不能透明地在进程之间传输,必须经过驱动翻译.例如当Server把Binder实体传递给Client时,在发送数据流中,`flat_binder_object`中的type是`BINDER_TYPE_BINDER`,binder指向Server进程用户空间地址.如果透传给接收端将毫无用处,驱动必须对数据流中的这个Binder做修改: 将type改成`BINDER_TYPE_HANDLE`;为这个Binder在接收进程中创建位于内核中的引用并将引用号填入handle中.对于发送数据流中引用类型的Binder也要做同样转换.经过处理后接收进程从数据流中取得的Binder引用才是有效的,才可以将其填入数据包`binder_transaction_data`的target.handle域,向Binder实体发送请求.
+
+这样做是出于安全性考虑: 应用程序不能随便猜测一个引用号填入target.handle中就可以向Server请求服务了,因为驱动并没有为你在内核中创建该引用,必定会被驱动拒绝.唯有经过身份认证确认合法后,由"权威机构"亲手授予你的Binder才能使用,因为这时驱动已经在内核中为你使用该Binder做了注册,交给你的引用号是合法的.
+
+下表总结了当`flat_binder_object`结构穿过驱动时驱动所做的操作：
+
+<div style="width: 150pt">Binder类型(type域)</div> | 在发送方的操作 | 在接收方的操作
+---|---|---
+`BINDER_TYPE_BINDER`,`BINDER_TYPE_WEAK_BINDER` | 只有实体所在的进程能发送该类型的Binder。如果是第一次发送驱动将创建实体在内核中的节点，并保存binder，cookie，flag域。| 如果是第一次接收该Binder则创建实体在内核中的引用；将handle域替换为新建的引用号；将type域替换为BINDER_TYPE_(WEAK_)HANDLE
+`BINDER_TYPE_HANDLE`,`BINDER_TYPE_WEAK_HANDLE` | 获得Binder引用的进程都能发送该类型Binder。驱动根据handle域提供的引用号查找建立在内核的引用。如果找到说明引用号合法，否则拒绝该发送请求。| 如果收到的Binder实体位于接收进程中：将ptr域替换为保存在节点中的binder值；cookie替换为保存在节点中的cookie值；type替换为`BINDER_TYPE_(WEAK_)BINDER`。如果收到的Binder实体不在接收进程中：如果是第一次接收则创建实体在内核中的引用；将handle域替换为新建的引用号
+BINDER_TYPE_FD | 验证handle域中提供的打开文件号是否有效，无效则拒绝该发送请求。| 在接收方创建新的打开文件号并将其与提供的打开文件描述结构绑定。
+
+#### 5.2.1 文件形式的Binder
+
+除了通常意义上用来通信的Binder,还有一种特殊的Binder: 文件Binder.这种Binder的基本思想是: 将文件看成Binder实体,进程打开的文件号看成Binder的引用.一个进程可以将它打开文件的文件号传递给另一个进程,从而另一个进程也打开了同一个文件,就像Binder的引用在进程之间传递一样.
+
+一个进程打开一个文件,就获得与该文件绑定的打开文件号.从Binder的角度,linux在内核创建的打开文件描述结构struct file是Binder的实体,打开文件号是该进程对该实体的引用.既然是Binder那么就可以在进程之间传递,故也可以用flat_binder_object结构将文件Binder通过数据包发送至其它进程,只是结构中type域的值为BINDER_TYPE_FD,表明该Binder是文件Binder.而结构中的handle域则存放文件在发送方进程中的打开文件号.我们知道打开文件号是个局限于某个进程的值,一旦跨进程就没有意义了.这一点和Binder实体用户指针或Binder引用号是一样的,若要跨进程同样需要驱动做转换.驱动在接收Binder的进程空间创建一个新的打开文件号,将它与已有的打开文件描述结构struct file勾连上,从此该Binder实体又多了一个引用.新建的打开文件号覆盖flat_binder_object中原来的文件号交给接收进程.接收进程利用它可以执行read(),write()等文件操作.
+
+传个文件为啥要这么麻烦,直接将文件名用Binder传过去,接收方用open()打开不就行了吗？其实这还是有区别的.首先对同一个打开文件共享的层次不同：使用文件Binder打开的文件共享linux VFS中的struct file,struct dentry,struct inode结构,这意味着一个进程使用read()/write()/seek()改变了文件指针,另一个进程的文件指针也会改变；而如果两个进程分别使用同一文件名打开文件则有各自的struct file结构,从而各自独立维护文件指针,互不干扰.其次是一些特殊设备文件要求在struct file一级共享才能使用,例如android的另一个驱动ashmem,它和Binder一样也是misc设备,用以实现进程间的共享内存.一个进程打开的ashmem文件只有通过文件Binder发送到另一个进程才能实现内存共享,这大大提高了内存共享的安全性,道理和Binder增强了IPC的安全性是一样的.
+
+### 5.3 Binder在驱动中的表述
+
+驱动是Binder通信的核心,系统中所有的Binder实体以及每个实体在各个进程中的引用都登记在驱动中.驱动需要记录Binder引用->实体之间多对一的关系;为引用找到对应的实体;在某个进程中为实体创建或查找到对应的引用;记录Binder的归属地(位于哪个进程中);通过管理Binder强/弱引用来创建/销毁Binder实体等等.
+
+驱动里的Binder是什么时候创建的呢?前面提到过,为了实现实名Binder的注册,系统必须创建第一只鸡-为ServiceManager创建的,用于注册实名Binder的Binder实体,负责实名Binder注册过程中的进程间通信.既然创建了实体就要有对应的引用: 驱动将所有进程的0号引用都预留给该Binder实体,即所有进程的0号引用天然地指向注册实名Binder专用的Binder,无须特殊操作既可以使用0号引用来注册实名Binder.
+
+接下来随着应用程序不断地注册实名Binder,不断向ServiceManager索要Binder的引用,不断将Binder从一个进程传递给另一个进程,越来越多的Binder以传输结构-`flat_binder_object`的形式穿越驱动做跨进程的迁徙.由于`binder_transaction_data`中data.offset数组的存在,所有流经驱动的Binder都逃不过驱动的眼睛.Binder将这些穿越进程边界的Binder做如下操作: 检查传输结构的type域,如果是`BINDER_TYPE_BINDER`或`BINDER_TYPE_WEAK_BINDER`则创建Binder的实体;如果是`BINDER_TYPE_HANDLE`或`BINDER_TYPE_WEAK_HANDLE`则创建Binder的引用;如果是`BINDER_TYPE_HANDLE`则为进程打开文件,无须创建任何数据结构.随着越来越多的Binder实体或引用在进程间传递,驱动会在内核里创建越来越多的节点或引用,当然这个过程对用户来说是透明的.
+
+#### 5.3.1 Binder实体在驱动中的表述
+
+驱动中的Binder实体也叫"节点",隶属于提供实体的进程,由`struct binder_node`结构来表示:
+
+<div style="width: 150pt">成员</div> | 含义
+---|---
+int debug_id; | 用于调试
+struct binder_work work; | 当本节点引用计数发生改变，需要通知所属进程时，通过该成员挂入所属进程的to-do队列里，唤醒所属进程执行Binder实体引用计数的修改
+union {struct rb_node rb_node;struct hlist_node dead_node;}; | 每个进程都维护一棵红黑树，以Binder实体在用户空间的指针，即本结构的ptr成员为索引存放该进程所有的Binder实体。这样驱动可以根据Binder实体在用户空间的指针很快找到其位于内核的节点。`rb_node`用于将本节点链入该红黑树中。销毁节点时须将`rb_node`从红黑树中摘除，但如果本节点还有引用没有切断，就用dead_node将节点隔离到另一个链表中，直到通知所有进程切断与该节点的引用后，该节点才可能被销毁。
+struct binder_proc *proc; | 本成员指向节点所属的进程，即提供该节点的进程
+struct hlist_head refs; | 本成员是队列头，所有指向本节点的引用都链接在该队列里。这些引用可能隶属于不同的进程。通过该队列可以遍历指向该节点的所有引用
+int internal_strong_refs; | 用以实现强指针的计数器：产生一个指向本节点的强引用该计数就会加1
+int local_weak_refs; | 驱动为传输中的Binder设置的弱引用计数。如果一个Binder打包在数据包中从一个进程发送到另一个进程，驱动会为该Binder增加引用计数，直到接收进程通过BC_FREE_BUFFER通知驱动释放该数据包的数据区为止。
+int local_strong_refs; | 驱动为传输中的Binder设置的强引用计数。同上。
+void __user *ptr; | 指向用户空间Binder实体的指针，来自于flat_binder_object的binder成员
+void __user *cookie; | 指向用户空间的附加指针，来自于flat_binder_object的cookie成员
+unsigned has_strong_ref;unsigned pending_strong_ref;unsigned has_weak_ref;unsigned pending_weak_ref | 这一组标志用于控制驱动与Binder实体所在进程交互式修改引用计数
+unsigned has_async_transaction；| 该成员表明该节点在to-do队列中有异步交互尚未完成。驱动将所有发送往接收端的数据包暂存在接收进程或线程开辟的to-do队列里。对于异步交互，驱动做了适当流控：如果to-do队列里有异步交互尚待处理则该成员置1，这将导致新到的异步交互存放在本结构成员 – asynch_todo队列中，而不直接送到to-do队列里。目的是为同步交互让路，避免长时间阻塞发送端。
+unsigned accept_fds | 表明节点是否同意接受文件方式的Binder，来自flat_binder_object中flags成员的FLAT_BINDER_FLAG_ACCEPTS_FDS位。由于接收文件Binder会为进程自动打开一个文件，占用有限的文件描述符，节点可以设置该位拒绝这种行为。
+int min_priority | 设置处理Binder请求的线程的最低优先级。发送线程将数据提交给接收线程处理时，驱动会将发送线程的优先级也赋予接收线程，使得数据即使跨了进程也能以同样优先级得到处理。不过如果发送线程优先级过低，接收线程将以预设的最小值运行。该域的值来自于flat_binder_object中flags成员。
+struct list_head async_todo | 异步交互等待队列；用于分流发往本节点的异步交互包
+
+每个进程都有一颗红黑树用于存放创建好的节点,以Binder在用户空间的指针作为索引.每当在传输数据中侦测到一个代表Binder实体的`flat_binder_object`,先以该结构的binder指针为索引搜索红黑树;如果没找到就创建一个新节点添加到树中.由于对于同一个进程来说内存地址是唯一的,所以不会重复建设造成混乱.
+
+#### 5.3.2 Binder引用在驱动中的表述
 
 ## 资料
 
