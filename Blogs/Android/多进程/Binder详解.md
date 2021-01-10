@@ -413,6 +413,18 @@ Android是基于Linux内核构建的,Linux已经提供了很多进程间通信�
 
 ### 9.4 一次完整的 IPC 通信流程是怎样的？
 
+- 了解Binder的整体架构设计
+- 了解应用和Binder的驱动交互方式
+- 了解IPC过程中的通信协议
+
+Client与Binder驱动交互:  首先是从应用层的Proxy的transact函数开始,传递到Java层的BinderProxy,最后到Native层的BpBinder的transact. 在BpBinder的transact实际上是调用IPCThreadState的transact函数,它的第一个参数是handle值,Binder驱动会根据这个handle找到Binder引用对象,继而找到Binder实体对象.在这个函数中,做了两件事.一件是调用writeTransactionData向Binder驱动发出一个`BC_TRANSACTION`的命令协议,把所需参数写到mOut中;第二件是waitForResponse等待回复,在它里面才会真正的和Binder驱动进行交互,也就是调用talkWithDriver,然后接收到的响应执行相应的处理. 这时候Client接收到的是`BR_TRANSACTION_COMPLET`,表示Binder驱动已经接收到了Client的请求了.在这里面还有一个cmd为`BR_REPLY`的返回协议,表示Binder驱动已经把响应返回给Client端了.在talkWithDriver中,是通过系统调用ioctl来和Binder驱动进行交互的,传递一个`BINDER_WRITE_READ`的命令并且携带一个`binder_write_read`数据结构体.在Binder驱动层就会根据`write_size/read_size`处理该`BINDER_WRITE_READ`命令.
+
+Server端与Binder驱动交互:  Server端首先会开启一个Binder线程来处理进程间通信请求,也就是通过new Thread然后把该线程注册到Binder驱动.注册是通过`BC_ENTER_LOOPER`命令协议来做的,接下来就是在do while死循环中调用getAndExecuteCommand.它里面做的就是不断从驱动中读取请求,也就是talkWithDriver,然后再处理请求executeCommand.在executeCommand中,会根据`BR_TRANSACTION`来调用BBinder Binder实体对象的onTransact函数来进行处理.然后再发送一个`BC_REPLY`把响应结构返回给Binder驱动.Binder驱动在接收到`BC_REPLY`之后就会向Server发送一个`BR_TRANSACTION_COMPLETE`协议表示Binder驱动已经收到了.在此同时呢,也会向Client端发送一个`BR_REPLY`把响应回写给Client端.
+
+需要注意的是,上面的onTransact函数就是Server端AIDL生成的Stub类的onTransact函数,这时一次完整的IPC通信流程就完成了.
+
+![Binder完整通信流程](https://raw.githubusercontent.com/xfhy/Android-Notes/master/Images/Binder%E5%AE%8C%E6%95%B4%E9%80%9A%E4%BF%A1%E6%B5%81%E7%A8%8B_Interview.png)
+
 ### 9.5 Binder 对象跨进程传递的原理是怎么样的？
 ### 9.6 Binder OneWay 机制
 ### 9.7 Binder传输大小限制
