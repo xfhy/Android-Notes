@@ -357,19 +357,19 @@ Binder通信实际上是位于不同进程中的线程之间的通信.假如进�
 
 接下来探讨一下Binder驱动是如何递交同步交互和异步交互的.我们知道,同步交互和异步交互的区别是同步交互的请求端(Client)在发出请求数据包后需要等待应答端(Server)的返回数据包,而异步交互的发送端发出请求数据包后交互即结束.对于这两种交互的请求数据包,驱动可以不管三七二十一,通通丢到接收端的todo队列中一个个处理.但驱动并没有这么做,而是对异步交互做了限流,令其为同步交互让路,具体做法是: 对于某个Binder实体,只要有一个异步交互没有处理完毕,例如正在被某个线程处理或还在任意一条todo队列里排队,那么接下来发给该实体的异步交互包将不再投递到todo队列中,而是阻塞在驱动为该实体开辟的异步交互接收队列(Binder节点的async_todo域中),但这期间同步交互依旧不受限制直接进入todo队列获得处理,一直到该异步交互处理完毕下一个异步交互方可以脱离异步交互队列进入todo队列中.之所以要这么做是因为同步交互的请求端需要等待返回包,必须迅速处理完毕以免影响请求端的相应速度,而异步交互属于"发射后不管",稍微延时一点不会阻塞其他线程.所以用专门队列将过多的异步交互暂存起来,以免突发大量异步交互挤占Server端的处理能力或耗尽线程池里的线程,进而阻塞同步交互.
 
-## Interview
+## 9. Interview
 
-### Binder模型原理步骤说明
+### 9.1 Binder模型原理步骤说明
 
 ![Binder模型原理步骤说明](https://raw.githubusercontent.com/xfhy/Android-Notes/master/Images/Binder%E6%A8%A1%E5%9E%8B%E5%8E%9F%E7%90%86%E6%AD%A5%E9%AA%A4%E8%AF%B4%E6%98%8E.png)
 
-### 谈谈你对Binder的理解
+### 9.2 谈谈你对Binder的理解
 
-#### 1. Binder是干什么的
+#### 9.2.1 Binder是干什么的
 
 > 跨进程通信
 
-#### 2. Binder存在的意义
+#### 9.2.2 Binder存在的意义
 > 选择Binder作为最主要的IPC通信机制的原因: 性能,方便,安全
 
 Binder是Android中一种高效、方便、安全的进程间通信方式.
@@ -378,7 +378,7 @@ Binder是Android中一种高效、方便、安全的进程间通信方式.
 - 方便是指用起来简单直接,Client端使用Service端提供的服务只需要传Service的一个描述符即可,就可以获取到Service提供的服务接口
 - 安全是指Binder验证调用方可靠的身份信息,这个身份信息不能调用方自己填写的,显示是不可靠的,而可靠的身份信息应该是IPC机制本身在内核态中添加.
 
-#### 3. Binder的架构原理
+#### 9.2.3 Binder的架构原理
 
 Binder通信模型由四方参入,分别是Binder驱动层、Client端、Server端和ServiceManager.
 
@@ -396,15 +396,31 @@ Binder驱动就会把这个请求交给Binder实体对象去处理,也就是是�
 
 至于Client获取服务,其实和这个差不多,也就是拿到服务的BinderProxy对象即可.
 
-在回答的时候，最后可以画一下图：
+在回答的时候，最好可以画一下图：
 
 ![Binder通信模型示意图](https://raw.githubusercontent.com/xfhy/Android-Notes/master/Images/Binder%E9%80%9A%E4%BF%A1%E6%A8%A1%E5%9E%8B%E7%A4%BA%E6%84%8F%E5%9B%BE.png)
 
 ![Binder通信分层架构图](https://raw.githubusercontent.com/xfhy/Android-Notes/master/Images/Binder%E9%80%9A%E4%BF%A1%E5%88%86%E5%B1%82%E6%9E%B6%E6%9E%84%E5%9B%BE.png)
 
-## todo 
+### 9.3 Android Framework IPC方式
 
-- [ ]  Binder传输大小限制
+Android是基于Linux内核构建的,Linux已经提供了很多进程间通信机制,比如有管道、Socket、共享内存、信号等,在Android Framework中不仅用到了Binder,这些IPC方式也都有使用到.
+
+- 管道: 管道是半双工的,管道的描述符只能读或写,想要既可以读也可以写就需要两个描述符,而且管道一般用在父子进程之间的.Linux提供了pipe函数创建一个管道,传入一个fd[2]数组,fd[0]表示读端,fd[1]表示写端.假如父进程创建了一对描述符,fork出的子进程继承了这对描述符,这时候父进程想要往子进程写东西,就可以拿fd[1]写,然后子进程在fd[0]就可以读到了.在Android中,Native层的Looper使用到了管道,它里面使用epoll监听读事件(epoll_wait),如果其他进程往里面写东西他就能收到通知.管道在哪写的呢,其实是在wake函数中,当别的线程向Looper线程发消息并且需要唤醒Looper线程的时候就会调用wake函数,wake函数里面呢就是向管道写一个"W"字符.管道使用起来很方便,主要是能配合epoll机制监听读写事件.这是Android 19 才会使用到管道,更高版本使用的是EventFd.
+- Socket: Socket是全双工的,也就是说既可以写也可以读,而且进程之间不需要亲缘关系,只需要公开一个地址即可.Framework中使用到了Socket最经典的莫过于Zygote等待AMS的请求了,请求来了之后Zygote开始fork新的应用程序进程.在Zygote的main方法中register一个ZygoteSocket,然后进入runSelectLoop循环去监听有没有新的连接,如果有的数据发过来就会去调用runOnce函数去根据参数fork出新的应用程序进程,其实就是去执行ActivityThread的main函数,然后也会通过这个Socket把新创建的应用进程pid返回给Zygote.
+- 共享内存: 共享内存是不需要多次拷贝的,而且特别快.拿到文件描述符分别映射到进程的地址空间即可.在Android中提供了MemoryFile类,里面封装了ashmem机制,也就是Android的匿名共享内存.首先通过`ashmem_create_region` 创建一块匿名共享内存,返回一个fd,然后调用mmap函数给这个fd映射到当前进程地址空间中.
+- 信号: 信号是单向的,而且发出去之后不关心处理结果,知道进程的pid就能发信号了.在杀应用进程的时候会调用Process的killProcess函数发送一个`SIGNAL_KILL`信号.还有Zygote在fork完成一个新的子进程之后还会监听SIGCHLD信号,如果子进程退出之后就会回收相应的资源,避免子进程成为一个僵尸进程.
+
+### 9.4 一次完整的 IPC 通信流程是怎样的？
+
+### 9.5 Binder 对象跨进程传递的原理是怎么样的？
+### 9.6 Binder OneWay 机制
+### 9.7 Binder传输大小限制
+### 9.8 Binder可以同时处理的并发请求量是多少？
+### 9.9 Binder需要传输大数据该怎么办？
+### 9.10 Binder通信过程中抛出异常、Error怎么办？系统是怎么处理的？
+### 9.11 Binder在同进程中使用时会影响效率么？
+### 9.12 Intent使用过程中的限制
 
 ## 资料
 
