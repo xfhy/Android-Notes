@@ -426,7 +426,30 @@ Server端与Binder驱动交互:  Server端首先会开启一个Binder线程来�
 ![Binder完整通信流程](https://raw.githubusercontent.com/xfhy/Android-Notes/master/Images/Binder%E5%AE%8C%E6%95%B4%E9%80%9A%E4%BF%A1%E6%B5%81%E7%A8%8B_Interview.png)
 
 ### 9.5 Binder 对象跨进程传递的原理是怎么样的？
+
+> 跨进程的时候传递的是Binder对象
+
+- Binder传递有哪些方式? AIDL
+- Binder在传递过程中是怎么存储的?
+- Binder对象序列化和反序列化过程
+- Binder对象传递过程中驱动层做了什么?
+
+大致有以下五点:
+
+1. 是通过Parcel进行传递的.在Native层,Binder对象是存在Parcel中的,Parcel提供了writeStrongBinder和readStrongBinder方法来进行读或写.
+2. Binder在Parcel中的存储原理: `flat_binder_object`(一个数据结构),它是在Binder的缓存区里面存储的,Parcel有一个数组专门保存了`flat_binder_object`的偏移.所以到了目标进程之后,收到了Parcel之后,就可以根据这个偏移还原出`flat_binder_object`
+3. Parcel在传到Binder驱动之后,根据取出来的`flat_binder_object`创建一些数据结构: `binder_node`(Binder实体对象)和`binder_ref`(Binder引用,在另一个进程使用的).传给另一个进程的是Binder引用,一个Binder实体可以对应多个Binder引用对象
+4. `binder_ref`在目标进程会有一个对应的handle,这个handle往上传,会创建一个BpBinder(Binder在Framework Native层的对象)
+5. BpBinder再往上就会封装一个BinderProxy,再往上就会封装一个业务层的Proxy
+
 ### 9.6 Binder OneWay 机制
+
+OneWay就是异步Binder调用,带ONEWAY的waitForResponse参数为null,也就是不需要等待返回结果,而不带ONEWAY的,就是普通AIDL接口,它是需要等待对方回复的.
+
+对于系统来说,一般都是oneway的,比如在启动一个Activity时,它是异步的,不会阻塞系统服务,但是在Server端,它是串行化的,都是放在进程的todo队列里面一个一个的进行分发处理.
+
+![](https://raw.githubusercontent.com/xfhy/Android-Notes/master/Images/Binder%E7%9A%84OneWay%E6%9C%BA%E5%88%B6%E7%A4%BA%E6%84%8F%E5%9B%BE.png)
+
 ### 9.7 Binder传输大小限制
 ### 9.8 Binder可以同时处理的并发请求量是多少？
 ### 9.9 Binder需要传输大数据该怎么办？
