@@ -451,6 +451,154 @@ OneWay就是异步Binder调用,带ONEWAY的waitForResponse参数为null,也就�
 ![](https://raw.githubusercontent.com/xfhy/Android-Notes/master/Images/Binder%E7%9A%84OneWay%E6%9C%BA%E5%88%B6%E7%A4%BA%E6%84%8F%E5%9B%BE.png)
 
 ### 9.7 Binder传输大小限制
+
+todo xfhy
+
+- [ ] Intent传递大数据案例->发送广播->app与AMS通信(跨进程),所以这里传递大数据会崩溃.触发到了Binder的最大限制问题.
+
+```
+接下来就是App进程调用AMS进程中的方法了。简单来说，系统进程中的AMS集中负责管理所有进程中的Activity。app进程与系统进程需要进行双向通信。比如打开一个新的Activity，则需要调用系统进程AMS中的方法进行实现，AMS等实现完毕需要回调app进程中的相关方法进行具体activity生命周期的回调。
+
+所以我们在intent中携带的数据也要从APP进程传输到AMS进程，再由AMS进程传输到目标Activity所在进程。有同学可能由疑问了，目标Acitivity所在进程不就是APP进程吗？其实是不一定的，我们可以在Manifest.xml中设置android:process属性来为Activity, Service等指定单独的进程，所以Activity的startActivity方法是原生支持跨进程通信的。
+```
+
+跨进程通信无法传递大数据,一次Binder通信最大可以传输是1MB-8KB(说法不准确).
+
+**1MB-8KB来源**
+
+在`rameworks/native/libs/binder/ProcessState.cpp`中有清晰的定义
+
+```cpp
+#define BINDER_VM_SIZE ((1 * 1024 * 1024) - sysconf(_SC_PAGE_SIZE) * 2)//这里的限制是1MB-4KB*2
+
+ProcessState::ProcessState(const char *driver)
+{
+    if (mDriverFD >= 0) {
+        // mmap the binder, providing a chunk of virtual address space to receive transactions.
+        // 调用mmap接口向Binder驱动中申请内核空间的内存
+        mVMStart = mmap(0, BINDER_VM_SIZE, PROT_READ, MAP_PRIVATE | MAP_NORESERVE, mDriverFD, 0);
+        if (mVMStart == MAP_FAILED) {
+            // *sigh*
+            ALOGE("Using %s failed: unable to mmap transaction memory.\n", mDriverName.c_str());
+            close(mDriverFD);
+            mDriverFD = -1;
+            mDriverName.clear();
+        }
+    }
+}
+```
+
+如果一个进程使用ProcessState这个类来初始化Binder服务,这个进程的Binder内核内存上限就是`BINDER_VM_SIZE`,也就是1MB-8KB. 对于普通的app进程来说,都是Zygote进程孵化出来的,Zygote进程在初始化Binder服务的时候提前初始化好了ProcessState这个类,所以普通的app进程上限就是1MB-8KB.
+
+```cpp
+//frameworks/base/cmds/app_process/app_main.cpp
+virtual void onZygoteInit()
+{
+    sp<ProcessState> proc = ProcessState::self();
+    ALOGV("App process: starting thread pool.\n");
+    proc->startThreadPool();
+}
+```
+
+**不用ProcessState来初始化Binder服务,突破1MB-8KB的限制**
+
+Binder服务的初始化有两步,open打开Binder驱动,mmap在Binder驱动中申请内核空间内存,所以我们只要手写open,mmap就可以轻松突破这个限制.源码中有类似的例子:
+
+```cpp
+//frameworks/native/cmds/servicemanager/bctest.c
+int main(int argc, char **argv)
+{
+    struct binder_state *bs;
+    uint32_t svcmgr = BINDER_SERVICE_MANAGER;
+    uint32_t handle;
+
+    bs = binder_open("/dev/binder", 128*1024);//我们可以把这个数值改成2*1024*1024就可以突破这个限制了
+    if (!bs) {
+        fprintf(stderr, "failed to open binder driver\n");
+        return -1;
+    }
+}
+
+//frameworks/native/cmds/servicemanager/binder.c
+struct binder_state *binder_open(const char* driver, size_t mapsize)
+{
+    ...//省略部分代码
+    bs->fd = open(driver, O_RDWR | O_CLOEXEC);
+    ....//省略部分代码
+    bs->mapsize = mapsize;//这里mapsize=128*1024
+    bs->mapped = mmap(NULL, mapsize, PROT_READ, MAP_PRIVATE, bs->fd, 0);
+    ....//省略部分代码
+}
+```
+
+看起来理论上是可以的,但是如果申请的内存太大也是不行的,在Binder驱动中mmap的具体实现中还有一个4M的限制
+
+```cpp
+//drivers/staging/android/binder.c
+static int binder_mmap(struct file *filp, struct vm_area_struct *vma)
+{
+    int ret;
+    struct vm_struct *area;
+    struct binder_proc *proc = filp->private_data;
+    const char *failure_string;
+    struct binder_buffer *buffer;
+
+    if (proc->tsk != current)
+        return -EINVAL;
+
+    if ((vma->vm_end - vma->vm_start) > SZ_4M)
+        vma->vm_end = vma->vm_start + SZ_4M;//如果申请的size大于4MB了，会在驱动中被修改成4MB
+
+    binder_debug(BINDER_DEBUG_OPEN_CLOSE,
+             "binder_mmap: %d %lx-%lx (%ld K) vma %lx pagep %lx\n",
+             proc->pid, vma->vm_start, vma->vm_end,
+             (vma->vm_end - vma->vm_start) / SZ_1K, vma->vm_flags,
+             (unsigned long)pgprot_val(vma->vm_page_prot));
+}
+```
+
+那么目前的结论就是4M或1MB-8KB这个答案了,到底对不对呢?看下面的代码
+
+```cpp
+// /drivers/staging/android/binder.c
+static int binder_mmap(struct file *filp, struct vm_area_struct *vma)
+{
+    ......
+    proc->free_async_space = proc->buffer_size / 2;//这个代码引起我注意，async代码异步的意思
+    barrier();
+    proc->files = get_files_struct(current);
+    proc->vma = vma;
+    proc->vma_vm_mm = vma->vm_mm;
+}
+
+static struct binder_buffer *binder_alloc_buf(struct binder_proc *proc,
+                          size_t data_size,
+                          size_t offsets_size, int is_async)
+{
+
+    ......
+    if (is_async &&
+        proc->free_async_space < size + sizeof(struct binder_buffer)) {
+        //对于oneway的Binder调用，可申请内核空间，最大上限是buffer_size的一半，也就是mmap时候传递的值的一半。
+        binder_debug(BINDER_DEBUG_BUFFER_ALLOC,
+                 "%d: binder_alloc_buf size %zd failed, no async space left\n",
+                  proc->pid, size);
+        return NULL;
+    }
+}
+```
+
+从源码中可以看到,对于oneway的Binder调用,可申请内核空间,最大上限是`buffer_size`的一半,也就是mmap时候传递的值的一半. 至于原因,猜想是: Binder调用中同步调用优先级大于oneway(异步)的调用,为了充分满足同步调用的内存需要,所以将oneway调用的内存限制到申请内存上限的一半.
+
+**所以,最终结论**是:
+
+` | 手写mmap初始化Binder服务 | ProcessState初始化Binder服务
+---|---|---
+oneway | 4M/2 | (1M-8K)/2
+非oneway | 4M | 1M-8K
+
+那么平时我们自己写的app能否突破1M-8K的限制,答案是理论上可以,但不建议这样操作,因为Binder驱动中并没有对open,mmap有调用次数的限制,app可以通过JNI调用open,mmap来突破这个限制,但是会对当前正在进行Binder调用的app造成不可想象的问题.当然可以先close Binder驱动.但是一旦app没有了Binder通信,基本就废了,app不能正常使用了.app和其他应用,AMS,WMS的交互都是依赖于Binder通信.
+
 ### 9.8 Binder可以同时处理的并发请求量是多少？
 ### 9.9 Binder需要传输大数据该怎么办？
 ### 9.10 Binder通信过程中抛出异常、Error怎么办？系统是怎么处理的？
@@ -467,3 +615,5 @@ OneWay就是异步Binder调用,带ONEWAY的waitForResponse参数为null,也就�
 - [Binder在通信时，为什么只需要一次拷贝？](jianshu.com/p/73fafb9b19ce)
 - [Binder 的理解](https://github.com/Omooo/Android-Notes/blob/master/blogs/Android/Framework/Interview/%E8%BF%9B%E7%A8%8B%E9%97%B4%E9%80%9A%E4%BF%A1%E7%9B%B8%E5%85%B3/Binder%20%E7%9A%84%E7%90%86%E8%A7%A3.md)
 - [Binder 系列口水话](https://github.com/Omooo/Android-Notes/blob/master/blogs/Android/%E5%8F%A3%E6%B0%B4%E8%AF%9D/Binder.md)
+- [[007]一次Binder通信最大可以传输多大的数据？](https://www.jianshu.com/p/ea4fc6aefaa8)
+- [[006]匿名共享内存（Ashmem）的使用](https://www.jianshu.com/p/62db83a97a5c)
