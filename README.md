@@ -113,7 +113,7 @@
 
 ### About me
 
-- #### Email: [xfhy666@gmail.com]()
+- #### Email: <a href="mailto:xfhy666@gmail.com">xfhy666@gmail.com</a>
 - #### CSDN: [https://blog.csdn.net/xfhy_](https://blog.csdn.net/xfhy_)
 - #### 掘金: [https://juejin.cn/user/2189882892500894](https://juejin.cn/user/2189882892500894)
 
