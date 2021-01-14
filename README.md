@@ -2,9 +2,9 @@
 
 > Android-Notes
 
-✍🏻 这里是写博客的地方,努力打造一系列适合初中高级工程师能够看得懂的优质文章，如果想第一时间获取文章，欢迎关注我的公众号：xfhy，Android的路很长,我们一起走下去！:v:
+✍🏻 这里是写博客的地方，努力打造一系列适合初中高级工程师能够看得懂的优质文章，如果想第一时间获取文章，欢迎关注我的公众号：xfhy，Android的路很长，我们一起走下去！:v:
 
-**本项目会长期更新,不断完善** :triangular_flag_on_post:
+**本项目会长期更新，不断完善** :triangular_flag_on_post:  如果大家觉得它对你有帮助的话，可以点个star收藏一下~  你的鼓励是我写作的最大动力:beers:
 
 | Ⅰ | Ⅱ | Ⅲ | Ⅳ | Ⅴ | Ⅵ |
 | :---------: | :---------: | :---------: | :---------: | :---------:| :---------:|
@@ -109,3 +109,26 @@
 
 - [Android进程间通信: 深入浅出AIDL](/Blogs/Android/多进程/AIDL详解.md)
 - [Android进程间通信: Messenger详解](/Blogs/Android/多进程/Messenger详解.md)
+
+
+### About me
+
+- #### Email: [xfhy666@gmail.com]()
+- #### CSDN: [https://blog.csdn.net/xfhy_](https://blog.csdn.net/xfhy_)
+- #### 掘金: [https://juejin.cn/user/2189882892500894](https://juejin.cn/user/2189882892500894)
+
+### License
+
+Copyright 2021 xfhy
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+   http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
