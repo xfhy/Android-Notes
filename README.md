@@ -1,4 +1,7 @@
 
+<div align=center>
+<img src="https://raw.githubusercontent.com/xfhy/Android-Notes/master/Images/Android_notes_logo.png" width="35%">
+</div>
 
 > Android-Notes
 
