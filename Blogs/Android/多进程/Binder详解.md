@@ -1,3 +1,6 @@
+
+> 文中用到的[demo地址](https://github.com/xfhy/AllInOne/tree/master/app/src/main/java/com/xfhy/allinone/ipc)
+
 ## 0. Binder到底是什么?
 
 - 从机制、模型角度来说,Binder是一种Android中实现跨进程通信(IPC)的方式,即**Binder机制模型**.
@@ -452,17 +455,67 @@ OneWay就是异步Binder调用,带ONEWAY的waitForResponse参数为null,也就�
 
 ### 9.7 Binder传输大小限制
 
-todo xfhy
+#### 9.7.1 传递大数据案例
 
-- [ ] Intent传递大数据案例->发送广播->app与AMS通信(跨进程),所以这里传递大数据会崩溃.触发到了Binder的最大限制问题.
+平时我们在做app的时候,可能会涉及到startActivity时因传递数据过大而导致崩溃的问题.其实不止startActivity,只要是跨进程都会有这个传输数据过大问题,比如sendBroadcast也能造成.下面来还原一下现场
+
+```kotlin
+Intent().apply {
+    val bitmap = BitmapFactory.decodeResource(resources, R.mipmap.ic_launcher)
+    val createScaledBitmap = Bitmap.createScaledBitmap(bitmap, 1024, 1024, false)
+    putExtra("data", createScaledBitmap)
+    sendBroadcast(this)
+}
+```
+
+执行一下,如愿以偿,崩溃了
 
 ```
-接下来就是App进程调用AMS进程中的方法了。简单来说，系统进程中的AMS集中负责管理所有进程中的Activity。app进程与系统进程需要进行双向通信。比如打开一个新的Activity，则需要调用系统进程AMS中的方法进行实现，AMS等实现完毕需要回调app进程中的相关方法进行具体activity生命周期的回调。
-
-所以我们在intent中携带的数据也要从APP进程传输到AMS进程，再由AMS进程传输到目标Activity所在进程。有同学可能由疑问了，目标Acitivity所在进程不就是APP进程吗？其实是不一定的，我们可以在Manifest.xml中设置android:process属性来为Activity, Service等指定单独的进程，所以Activity的startActivity方法是原生支持跨进程通信的。
+2021-01-13 07:10:34.217 20303-20303/com.xfhy.allinone E/JavaBinder: !!! FAILED BINDER TRANSACTION !!!  (parcel size = 4194612)
+2021-01-13 07:10:34.219 20303-20303/com.xfhy.allinone E/AndroidRuntime: FATAL EXCEPTION: main
+        Process: com.xfhy.allinone, PID: 20303
+    java.lang.RuntimeException: android.os.TransactionTooLargeException: data parcel size 4194612 bytes
+        at android.app.ContextImpl.sendBroadcast(ContextImpl.java:886)
+        at android.content.ContextWrapper.sendBroadcast(ContextWrapper.java:421)
+        at android.content.ContextWrapper.sendBroadcast(ContextWrapper.java:421)
+        at com.xfhy.allinone.ipc.binder.BinderActivity.transferBigData(BinderActivity.kt:37)
+        at com.xfhy.allinone.ipc.binder.BinderActivity.access$transferBigData(BinderActivity.kt:16)
+        at com.xfhy.allinone.ipc.binder.BinderActivity$onCreate$1.onClick(BinderActivity.kt:28)
+        at android.view.View.performClick(View.java:5637)
+        at android.view.View$PerformClick.run(View.java:22429)
+        at android.os.Handler.handleCallback(Handler.java:751)
+        at android.os.Handler.dispatchMessage(Handler.java:95)
+        at android.os.Looper.loop(Looper.java:154)
+        at android.app.ActivityThread.main(ActivityThread.java:6119)
+        at java.lang.reflect.Method.invoke(Native Method)
+        at com.android.internal.os.ZygoteInit$MethodAndArgsCaller.run(ZygoteInit.java:886)
+        at com.android.internal.os.ZygoteInit.main(ZygoteInit.java:776)
+     Caused by: android.os.TransactionTooLargeException: data parcel size 4194612 bytes
+        at android.os.BinderProxy.transactNative(Native Method)
+        at android.os.BinderProxy.transact(Binder.java:615)
+        at android.app.ActivityManagerProxy.broadcastIntent(ActivityManagerNative.java:3536)
+        at android.app.ContextImpl.sendBroadcast(ContextImpl.java:881)
+        at android.content.ContextWrapper.sendBroadcast(ContextWrapper.java:421) 
+        at android.content.ContextWrapper.sendBroadcast(ContextWrapper.java:421) 
+        at com.xfhy.allinone.ipc.binder.BinderActivity.transferBigData(BinderActivity.kt:37) 
+        at com.xfhy.allinone.ipc.binder.BinderActivity.access$transferBigData(BinderActivity.kt:16) 
+        at com.xfhy.allinone.ipc.binder.BinderActivity$onCreate$1.onClick(BinderActivity.kt:28) 
+        at android.view.View.performClick(View.java:5637) 
+        at android.view.View$PerformClick.run(View.java:22429) 
+        at android.os.Handler.handleCallback(Handler.java:751) 
+        at android.os.Handler.dispatchMessage(Handler.java:95) 
+        at android.os.Looper.loop(Looper.java:154) 
+        at android.app.ActivityThread.main(ActivityThread.java:6119) 
+        at java.lang.reflect.Method.invoke(Native Method) 
+        at com.android.internal.os.ZygoteInit$MethodAndArgsCaller.run(ZygoteInit.java:886) 
+        at com.android.internal.os.ZygoteInit.main(ZygoteInit.java:776) 
 ```
 
-跨进程通信无法传递大数据,一次Binder通信最大可以传输是1MB-8KB(说法不准确).
+熟悉的TransactionTooLargeException异常来了.这里为什么会崩溃?在发送广播时,由Intent携带数据.最后发送广播的任务是需要交给AMS来完成的,而APP与AMS不在同一进程,这就需要涉及到跨进程通信,跨进程通信就要涉及到Binder,而Binder传递数据是有最大内存限制的,并且这个最大内存是APP内共享的.一旦超过这个限制,就会崩溃.
+
+#### 9.7.2 探究Binder传递大小限制
+
+先说老结论: 跨进程通信无法传递大数据,一次Binder通信最大可以传输是1MB-8KB(说法不准确).
 
 **1MB-8KB来源**
 
@@ -600,13 +653,246 @@ oneway | 4M/2 | (1M-8K)/2
 那么平时我们自己写的app能否突破1M-8K的限制,答案是理论上可以,但不建议这样操作,因为Binder驱动中并没有对open,mmap有调用次数的限制,app可以通过JNI调用open,mmap来突破这个限制,但是会对当前正在进行Binder调用的app造成不可想象的问题.当然可以先close Binder驱动.但是一旦app没有了Binder通信,基本就废了,app不能正常使用了.app和其他应用,AMS,WMS的交互都是依赖于Binder通信.
 
 ### 9.8 Binder可以同时处理的并发请求量是多少？
+
+无论是`system_server`进程,还是app进程,都是在进程fork完成后,便会在新进程中执行onZygoteInit()的过程中,启动binder线程池. Binder线程创建与其所在进程的创建中产生,Java层进程的创建都是通过Process.start()方法,向Zygote进程发出创建进程的socket消息,Zygote收到消息后会调用Zygote.forkAndSpecialize()来fork出新进程,在新进程中会调用到RuntimeInit.nativeZygoteInit(),该方法经过JNI映射,最终会调用到`app_main.cpp`中的onZygoteInit().
+
+```cpp
+// /frameworks/base/cmds/app_process/app_main.cpp
+virtual void onZygoteInit()
+{
+    //获取ProcessState对象
+    sp proc = ProcessState::self();
+    //启动新binder线程 
+    proc->startThreadPool();
+}
+```
+
+ProcessState::self()是单例模式,主要工作是调用open()打开`/dev/binder`驱动设备,再利用mmap()映射内核的地址空间,将Binder驱动的fd赋值ProcessState对象中的变量mDriverFD,用于交互操作.startThreadPool()是创建一个新的binder线程,不断地进行talkWithDriver().
+
+```cpp
+// /frameworks/native/libs/binder/ProcessState.cpp
+
+#define BINDER_VM_SIZE ((1 * 1024 * 1024) - sysconf(_SC_PAGE_SIZE) * 2)
+#define DEFAULT_MAX_BINDER_THREADS 15
+
+sp ProcessState::self()
+{
+    Mutex::Autolock _l(gProcessMutex);
+    if (gProcess != NULL) {
+        return gProcess;
+    }
+
+    //实例化ProcessState 
+    gProcess = new ProcessState;
+    return gProcess;
+}
+
+ProcessState::ProcessState()
+    : mDriverFD(open_driver()) // 打开Binder驱动
+    , mVMStart(MAP_FAILED)
+    , mThreadCountLock(PTHREAD_MUTEX_INITIALIZER)
+    , mThreadCountDecrement(PTHREAD_COND_INITIALIZER)
+    , mExecutingThreadsCount(0)
+    , mMaxThreads(DEFAULT_MAX_BINDER_THREADS)
+    , mManagesContexts(false)
+    , mBinderContextCheckFunc(NULL)
+    , mBinderContextUserData(NULL)
+    , mThreadPoolStarted(false)
+    , mThreadPoolSeq(1)
+{
+    if (mDriverFD >= 0) {
+        //采用内存映射函数mmap，给binder分配一块虚拟地址空间,用来接收事务
+        mVMStart = mmap(0, BINDER_VM_SIZE, PROT_READ, MAP_PRIVATE | MAP_NORESERVE, mDriverFD, 0);
+        if (mVMStart == MAP_FAILED) {
+            close(mDriverFD); //没有足够空间分配给/dev/binder,则关闭驱动
+            mDriverFD = -1;
+        }
+    }
+}
+
+```
+
+- ProcessState的单例模式的唯一性,因此一个进程只打开binder设备一次,其中ProcessState的成员变量mDriverFD记录binder驱动的fd,用于访问binder设备
+- `BINDER_VM_SIZE = (1*1024*1024) - (4096 *2)` 上节分析过,每个进程分配给binder的默认内存大小为1M-8K
+- `DEFAULT_MAX_BINDER_THREADS = 15`,**binder默认的最大可并发访问的线程数为16**. (默认地,每个进程的binder线程池的线程个数上限是15,该上限不统计通过`BC_ENTER_LOOPER`命令创建的binder主线程,只计算`BC_REGISTER_LOOPER`命令创建的线程.)
+
 ### 9.9 Binder需要传输大数据该怎么办？
+
+9.7节说过,在使用Binder在进程间传递数据的时候,有时候会抛出TransactionTooLargeException这个异常,这个异常的产生是因为Binder驱动对内存的限制引起的.也就是说,我们不能通过Binder传递太大的数据.官方文档有说明,最大通常限制为1M-8k.
+
+但是,有一个问题.在Android系统中,APP端View视图的数据是如何传递给SurfaceFlinger服务的呢?View绘制的数据最终是按照一帧一帧显示到屏幕上的,而每一帧都会占用一定的存储空间,在APP端执行draw的时候,数据很明显是要绘制到APP的进程空间,但是视图窗口要经过SurfaceFlinger图层混排才会生成最终的帧,而SurfaceFlinger又运行在另一个独立的服务进程,那么View视图的数据是如何在两个进程间传递的呢?普通的Binder通信肯定不行,因为Binder不太适合这种数据量大的通信,那么View数据的通信采用的是什么IPC手段呢? 答案是匿名共享内存(Anonymous Shared Memory-Ashmem).
+
+![匿名共享内存原理图](https://raw.githubusercontent.com/xfhy/Android-Notes/master/Images/%E5%8C%BF%E5%90%8D%E5%85%B1%E4%BA%AB%E5%86%85%E5%AD%98%E5%8E%9F%E7%90%86%E5%9B%BE.jpg)
+
+匿名共享内存是怎么使用呢?咱举个例子,使用匿名共享内存跨进程共享一个Bitmap.总所周知,Bitmap一般是比较大的,直接用Intent传递的话风险巨大.
+
+先说一下大体实现思路:
+
+服务端:
+
+1. 自定义Binder,然后在onTransact中处理客户端的调用请求
+2. 构建Bitmap
+3. 将Bitmap转为byte数组
+4. 创建匿名共享内存,写入byte数据
+5. 通过反射获取匿名共享内存的文件句柄
+6. 将文件句柄写到Binder调用的返回值中
+
+客户端:
+
+1. bindService连接服务端
+2. 通过服务端返回的Binder对象,调用其transact方法,从而实现调用服务端的方法,拿到方法返回值
+3. 从返回值里面获得RemoteService创建的匿名共享内存的FileDescriptor
+4. 获取匿名共享内存中的byte数据,将byte数据转成Bitmap
+5. 将Bitmap展示到ImageView上,方便验证
+
+大体思路有了,来看下服务端code:
+
+```kotlin
+const val SHARE_BITMAP_CODE = 2
+
+class AshmemRemoteService : Service() {
+
+    class AshmemBinder : Binder() {
+        override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean {
+            log(TAG, "Server : onTransact code=$code")
+            return when (code) {
+                SHARE_BITMAP_CODE -> {
+                    try {
+                        //构造Bitmap
+                        val createScaledBitmap = createBitmap()
+                        log(TAG, "Server : share bitmap=$createScaledBitmap")
+
+                        //将Bitmap转为byte数组
+                        val contentBytes = createScaledBitmap.toByteArray()
+
+                        //写数据到匿名共享内存中
+                        writeData(contentBytes, reply)
+                        true
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                        false
+                    }
+                }
+                else -> super.onTransact(code, data, reply, flags)
+            }
+
+        }
+
+        private fun writeData(contentBytes: ByteArray, reply: Parcel?) {
+            //创建匿名共享内存
+            val memoryFile = MemoryFile("memfile", contentBytes.size)
+            //写入byte数据
+            memoryFile.writeBytes(contentBytes, 0, 0, contentBytes.size)
+            //通过反射获得文件句柄
+            val method = MemoryFile::class.java.getDeclaredMethod("getFileDescriptor")
+            val fileDescriptor = method.invoke(memoryFile) as? FileDescriptor
+            //FileDescriptor不能直接跨进程传输,需要ParcelFileDescriptor.dup()一下转成ParcelFileDescriptor
+            val parcelFileDescriptor = ParcelFileDescriptor.dup(fileDescriptor)
+            //将文件句柄写到binder调用的返回值中
+            parcelFileDescriptor?.fileDescriptor?.let {
+                reply?.writeFileDescriptor(it)
+            }
+        }
+
+        private fun createBitmap(): Bitmap {
+            val decodeResource = BitmapFactory.decodeResource(
+                App.getAppContext().resources,
+                R.mipmap.ic_launcher
+            )
+            return Bitmap.createScaledBitmap(decodeResource, 1024, 1024, false)
+        }
+    }
+
+    override fun onBind(intent: Intent?): IBinder? {
+        log(TAG, "Server : onBind")
+        return AshmemBinder()
+    }
+
+}
+```
+
+我们自定义了一个Binder对象AshmemBinder,然后在其onTransact中处理客户端的远程调用.记得将AshmemRemoteService的`android:process`设置为其他进程,这样才好演示跨进程传递数据.
+
+然后是客户端code,只保留关键代码:
+
+```kotlin
+private const val TAG = "xfhy_ashmem"
+
+class AshmemActivity : TitleBarActivity() {
+
+    private var mService: IBinder? = null
+
+    private val mServiceConnection = object : ServiceConnection {
+
+        override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
+            mService = service
+        }
+
+        override fun onServiceDisconnected(name: ComponentName?) {
+        }
+    }
+
+    private fun bindAshmemService() {
+        Intent().apply {
+            action = "com.xfhy.ashmem.Server.Action"
+            setPackage("com.xfhy.allinone")
+        }.also { intent ->
+            bindService(intent, mServiceConnection, Context.BIND_AUTO_CREATE)
+        }
+    }
+
+    private fun getShareBitmap() {
+        log(TAG, "Client : onServiceConnected")
+        val data = Parcel.obtain()
+        val reply = Parcel.obtain()
+        try {
+            //通过binder机制跨进程调用服务端的接口
+            log(TAG, "Client : call server method code = $SHARE_BITMAP_CODE")
+            mService?.transact(SHARE_BITMAP_CODE, data, reply, 0)
+            //获得RemoteService创建的匿名共享内存的fd
+            val fileDescriptor = reply.readFileDescriptor().fileDescriptor
+
+            //获取匿名共享内存中的数据,并设置到ImageView上
+            val fileInputStream = FileInputStream(fileDescriptor)
+            val readBytes = fileInputStream.readBytes()
+            if (readBytes.isNotEmpty()) {
+                val bitmap = BitmapFactory.decodeByteArray(readBytes, 0, readBytes.size)
+                bitmap?.let {
+                    //正常情况下,这里应该压缩一下,因为你不知道这个Bitmap有多大,太大了直接展示的话可能会崩溃
+                    ivAshmemShare.setImageBitmap(bitmap)
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        unbindService(mServiceConnection)
+    }
+
+}
+```
+
+服务端这边就是利用服务端返回的Binder对象去进程远程调用,然后拿到服务端创建的匿名共享内存的FileDescriptor.通过这个FileDescriptor就能读到服务端那边共享的数据. 
+
+> 可以看到,示例里面是没有使用aidl的,直接用Binder进行通信,加深印象.
+
+其实除了匿名共享内存这种方式传递大数据之外呢,还可以将数据写入文件,然后将文件地址通过Binder传递,在另一个进程去读文件就能拿到数据.可行是可行,但是效率可就低了,而且需要处理同时写的问题.
+
+如果是同一进程,需要跨Activity传递大数据的话,也是不能把大数据放Intent中的.其实Intent其中还是会涉及到跨进程传递.这时可以把数据放内存中,另一个Activity来进行读取就行,毕竟同一进程嘛.
+
 ### 9.10 Binder通信过程中抛出异常、Error怎么办？系统是怎么处理的？
+
+
+
 ### 9.11 Binder在同进程中使用时会影响效率么？
 ### 9.12 Intent使用过程中的限制
 
 ## 资料
 
+- [本文中的demo](https://github.com/xfhy/AllInOne/tree/master/app/src/main/java/com/xfhy/allinone/ipc)
 - [为什么Android 要采用 Binder 作为 IPC 机制？](https://www.zhihu.com/question/39440766/answer/89210950)
 - [Binder系列—开篇](http://gityuan.com/2015/10/31/binder-prepare/)
 - [Android Binder设计与实现 - 设计篇](https://blog.csdn.net/universus/article/details/6211589)
@@ -617,3 +903,4 @@ oneway | 4M/2 | (1M-8K)/2
 - [Binder 系列口水话](https://github.com/Omooo/Android-Notes/blob/master/blogs/Android/%E5%8F%A3%E6%B0%B4%E8%AF%9D/Binder.md)
 - [[007]一次Binder通信最大可以传输多大的数据？](https://www.jianshu.com/p/ea4fc6aefaa8)
 - [[006]匿名共享内存（Ashmem）的使用](https://www.jianshu.com/p/62db83a97a5c)
+- [理解 Binder 线程池的管理](https://juejin.cn/post/6844903449232490510)
