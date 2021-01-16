@@ -864,6 +864,9 @@ class AshmemActivity : TitleBarActivity() {
             }
         } catch (e: Exception) {
             e.printStackTrace()
+        } finally {
+            data.recycle()
+            reply.recycle()
         }
     }
 
@@ -885,7 +888,244 @@ class AshmemActivity : TitleBarActivity() {
 
 ### 9.10 Binder通信过程中抛出异常、Error怎么办？系统是怎么处理的？
 
+要回答这个问题,直接写段demo,看看效果.demo思路:客户端远程调用服务端,服务端在执行方法过程中抛出异常,看看客户端或者服务端的反应,即可得到结果. 
 
+```kotlin
+private const val TAG = "xfhy_ashmem"
+const val TEST_SUPPORT_EXCEPTION = 1
+const val TEST_UNSUPPORT_EXCEPTION = 2
+const val TEST_ERROR = 3
+
+class BinderService : Service() {
+
+    class TestBinder : Binder() {
+        override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean {
+            log(TAG, "Server : onTransact code=$code")
+            return when (code) {
+                TEST_SUPPORT_EXCEPTION -> {
+                    throw NullPointerException()
+                }
+                TEST_UNSUPPORT_EXCEPTION -> {
+                    throw RuntimeException()
+                }
+                TEST_ERROR -> {
+                    throw NoSuchMethodError()
+                }
+                else -> super.onTransact(code, data, reply, flags)
+            }
+        }
+    }
+
+    override fun onBind(intent: Intent?): IBinder? {
+        log(TAG, "Server : onBind")
+        return TestBinder()
+    }
+
+}
+```
+
+我定义了一个BinderService用于接收客户端的调用,然后在onTransact中分别抛出几个异常.然后客户端那边调用这几个方法:
+
+```kotlin
+class BinderActivity : TitleBarActivity() {
+
+    private var mService: IBinder? = null
+
+    private val mServiceConnection = object : ServiceConnection {
+
+        override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
+            mService = service
+        }
+
+        override fun onServiceDisconnected(name: ComponentName?) {
+        }
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_binder)
+
+
+        btnTransferBigData.setOnClickListener {
+            transferBigData()
+        }
+        btnBindBinderService.setOnClickListener {
+            bindBinderService()
+        }
+        btnTestSupport.setOnClickListener {
+            testSupportException()
+        }
+        btnTestUnSupport.setOnClickListener {
+            testUnSupportException()
+        }
+        btnTestError.setOnClickListener {
+            testError()
+        }
+    }
+
+    private fun bindBinderService() {
+        Intent().apply {
+            action = "com.xfhy.binder.Server.Action"
+            setPackage("com.xfhy.allinone")
+        }.also { intent ->
+            bindService(intent, mServiceConnection, Context.BIND_AUTO_CREATE)
+        }
+    }
+
+    private fun testSupportException() {
+        val data = Parcel.obtain()
+        val reply = Parcel.obtain()
+        try {
+            mService?.transact(TEST_SUPPORT_EXCEPTION, data, reply, 0)
+            reply.readException()
+        } catch (e: Exception) {
+            e.printStackTrace()
+        } finally {
+            data.recycle()
+            reply.recycle()
+        }
+    }
+
+    private fun testUnSupportException() {
+        val data = Parcel.obtain()
+        val reply = Parcel.obtain()
+        try {
+            mService?.transact(TEST_UNSUPPORT_EXCEPTION, data, reply, 0)
+            reply.readException()
+        } catch (e: Exception) {
+            e.printStackTrace()
+        } finally {
+            data.recycle()
+            reply.recycle()
+        }
+    }
+
+    private fun testError() {
+        val data = Parcel.obtain()
+        val reply = Parcel.obtain()
+        try {
+            mService?.transact(TEST_ERROR, data, reply, 0)
+            reply.readException()
+        } catch (e: Exception) {
+            e.printStackTrace()
+        } finally {
+            data.recycle()
+            reply.recycle()
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        unbindService(mServiceConnection)
+    }
+
+}
+```
+
+上面的demo没有使用aidl,直接自己写Binder调用,加深印象.
+
+在调用testSupportException()方法之后:
+
+```log
+//7049是服务端   6925是客户端
+7049-7062/com.xfhy.allinone D/xfhy_ashmem: Server : onTransact code=1
+6925-6925/com.xfhy.allinone W/System.err: java.lang.NullPointerException
+6925-6925/com.xfhy.allinone W/System.err:     at android.os.Parcel.readException(Parcel.java:1690)
+6925-6925/com.xfhy.allinone W/System.err:     at android.os.Parcel.readException(Parcel.java:1637)
+6925-6925/com.xfhy.allinone W/System.err:     at com.xfhy.allinone.ipc.binder.BinderActivity.testSupportException(BinderActivity.kt:75)
+6925-6925/com.xfhy.allinone W/System.err:     at com.xfhy.allinone.ipc.binder.BinderActivity.access$testSupportException(BinderActivity.kt:21)
+6925-6925/com.xfhy.allinone W/System.err:     at com.xfhy.allinone.ipc.binder.BinderActivity$onCreate$3.onClick(BinderActivity.kt:51)
+6925-6925/com.xfhy.allinone W/System.err:     at android.view.View.performClick(View.java:5637)
+6925-6925/com.xfhy.allinone W/System.err:     at android.view.View$PerformClick.run(View.java:22429)
+6925-6925/com.xfhy.allinone W/System.err:     at android.os.Handler.handleCallback(Handler.java:751)
+6925-6925/com.xfhy.allinone W/System.err:     at android.os.Handler.dispatchMessage(Handler.java:95)
+6925-6925/com.xfhy.allinone W/System.err:     at android.os.Looper.loop(Looper.java:154)
+6925-6925/com.xfhy.allinone W/System.err:     at android.app.ActivityThread.main(ActivityThread.java:6119)
+6925-6925/com.xfhy.allinone W/System.err:     at java.lang.reflect.Method.invoke(Native Method)
+6925-6925/com.xfhy.allinone W/System.err:     at com.android.internal.os.ZygoteInit$MethodAndArgsCaller.run(ZygoteInit.java:886)
+6925-6925/com.xfhy.allinone W/System.err:     at com.android.internal.os.ZygoteInit.main(ZygoteInit.java:776)
+```
+
+可以看到的是这个异常从服务端传到了客户端,客户端收到了这个NPE.意思是客户端能感知服务端那边抛出的异常,那咱再调用一下testUnSupportException():
+
+```log
+//7049 是服务端
+7049-7061/com.xfhy.allinone D/xfhy_ashmem: Server : onTransact code=2
+7049-7061/com.xfhy.allinone E/JavaBinder: *** Uncaught remote exception!  (Exceptions are not yet supported across processes.)
+    java.lang.RuntimeException
+        at com.xfhy.allinone.ipc.binder.BinderService$TestBinder.onTransact(BinderService.kt:38)
+        at android.os.Binder.execTransact(Binder.java:565)
+```
+
+从日志来看,`Uncaught remote exception!  (Exceptions are not yet supported across processes.)`,这个异常不支持跨进程传递,客户端没有感知到.需要注意的是,这里服务端并没有因为异常而崩溃.
+
+哪些异常支持跨进程传递呢?其实除了上面的NPE以外,还有以下几种异常是支持跨进程通讯时客户端能感知的,只支持传递以下这几种异常:
+
+- SecurityException
+- BadParcelableException
+- IllegalArgumentException
+- NullPointerException
+- IllegalStateException
+- NetworkOnMainThreadException
+- UnsupportedOperationException
+- ServiceSpecificException
+- Parcelable的异常
+
+对于不支持的异常，会在程序内部处理，可能导致崩溃，但不会传递给对方。常见的不支持的异常:
+
+- RuntimeException
+- ArithmeticExecption
+- ClassCastException
+- ArrayIndexOutOfBoundsException
+- FileNotFoundException
+- NumberFormatException
+- IOException
+- NoSuchMethodException
+
+再来看下throw Error的情况:
+
+```log
+//6955是服务端  6925是客户端
+6983-6996/com.xfhy.allinone E/JavaBinder: *** Uncaught remote exception!  (Exceptions are not yet supported across processes.)
+        java.lang.NoSuchMethodError
+        at com.xfhy.allinone.ipc.binder.BinderService$TestBinder.onTransact(BinderService.kt:41)
+        at android.os.Binder.execTransact(Binder.java:565)
+
+6983-6996/com.xfhy.allinone W/System.err: java.lang.NoSuchMethodError
+6983-6996/com.xfhy.allinone W/System.err:     at com.xfhy.allinone.ipc.binder.BinderService$TestBinder.onTransact(BinderService.kt:41)
+6983-6996/com.xfhy.allinone W/System.err:     at android.os.Binder.execTransact(Binder.java:565)
+
+6955-6968/com.xfhy.allinone E/JavaBinder: Forcefully exiting
+1388-1388/? I/Zygote: Process 6955 exited cleanly (1)
+1688-2849/? I/ActivityManager: Process com.xfhy.allinone:other (pid 6955) has died
+1688-2849/? D/ActivityManager: cleanUpApplicationRecord -- 6955
+1688-2849/? W/ActivityManager: Scheduling restart of crashed service com.xfhy.allinone/.ipc.binder.BinderService in 1000ms
+
+//客户端打的日志
+6925-6925/com.xfhy.allinone W/System.err: android.os.DeadObjectException
+6925-6925/com.xfhy.allinone W/System.err:     at android.os.BinderProxy.transactNative(Native Method)
+6925-6925/com.xfhy.allinone W/System.err:     at android.os.BinderProxy.transact(Binder.java:615)
+6925-6925/com.xfhy.allinone W/System.err:     at com.xfhy.allinone.ipc.binder.BinderActivity.testError(BinderActivity.kt:102)
+6925-6925/com.xfhy.allinone W/System.err:     at com.xfhy.allinone.ipc.binder.BinderActivity.access$testError(BinderActivity.kt:21)
+6925-6925/com.xfhy.allinone W/System.err:     at com.xfhy.allinone.ipc.binder.BinderActivity$onCreate$5.onClick(BinderActivity.kt:57)
+6925-6925/com.xfhy.allinone W/System.err:     at android.view.View.performClick(View.java:5637)
+6925-6925/com.xfhy.allinone W/System.err:     at android.view.View$PerformClick.run(View.java:22429)
+6925-6925/com.xfhy.allinone W/System.err:     at android.os.Handler.handleCallback(Handler.java:751)
+6925-6925/com.xfhy.allinone W/System.err:     at android.os.Handler.dispatchMessage(Handler.java:95)
+6925-6925/com.xfhy.allinone W/System.err:     at android.os.Looper.loop(Looper.java:154)
+6925-6925/com.xfhy.allinone W/System.err:     at android.app.ActivityThread.main(ActivityThread.java:6119)
+6925-6925/com.xfhy.allinone W/System.err:     at java.lang.reflect.Method.invoke(Native Method)
+6925-6925/com.xfhy.allinone W/System.err:     at com.android.internal.os.ZygoteInit$MethodAndArgsCaller.run(ZygoteInit.java:886)
+6925-6925/com.xfhy.allinone W/System.err:     at com.android.internal.os.ZygoteInit.main(ZygoteInit.java:776)
+```
+
+从日志可以看出,Error不能跨进程传递,而且服务端被异常终止了.在服务端异常停止后,断开了Binder连接,服务端感知到了一个DeadObjectException.这时可以根据业务来判断是否需要重新连接.这里其实在之前AIDL文章中也提到过: Binder 死亡通知,服务端进程可能随时会被杀掉,这时我们需要在客户端能够被感知到binder已经死亡,从而做一些收尾清理工作或者进程重新连接.具体详情请参见:[AIDL详解 2.7节](https://github.com/xfhy/Android-Notes/blob/master/Blogs/Android/%E5%A4%9A%E8%BF%9B%E7%A8%8B/AIDL%E8%AF%A6%E8%A7%A3.md)
+
+现象呢是上面demo这样,某些异常支持跨进程传递,某些不支持.那这是基于什么原理呢?
+
+- [ ] todo xfhy Parcel#writeException()
+- [ ] todo xfhy Parcel#readException()
+- [ ] android.os.Binder.execTransact()
 
 ### 9.11 Binder在同进程中使用时会影响效率么？
 ### 9.12 Intent使用过程中的限制
@@ -904,3 +1144,4 @@ class AshmemActivity : TitleBarActivity() {
 - [[007]一次Binder通信最大可以传输多大的数据？](https://www.jianshu.com/p/ea4fc6aefaa8)
 - [[006]匿名共享内存（Ashmem）的使用](https://www.jianshu.com/p/62db83a97a5c)
 - [理解 Binder 线程池的管理](https://juejin.cn/post/6844903449232490510)
+- [Android之AIDL跨进程抛异常的原理](https://blog.csdn.net/LVXIANGAN/article/details/103441176)
