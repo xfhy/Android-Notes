@@ -1121,13 +1121,203 @@ class BinderActivity : TitleBarActivity() {
 
 从日志可以看出,Error不能跨进程传递,而且服务端被异常终止了.在服务端异常停止后,断开了Binder连接,服务端感知到了一个DeadObjectException.这时可以根据业务来判断是否需要重新连接.这里其实在之前AIDL文章中也提到过: Binder 死亡通知,服务端进程可能随时会被杀掉,这时我们需要在客户端能够被感知到binder已经死亡,从而做一些收尾清理工作或者进程重新连接.具体详情请参见:[AIDL详解 2.7节](https://github.com/xfhy/Android-Notes/blob/master/Blogs/Android/%E5%A4%9A%E8%BF%9B%E7%A8%8B/AIDL%E8%AF%A6%E8%A7%A3.md)
 
-现象呢是上面demo这样,某些异常支持跨进程传递,某些不支持.那这是基于什么原理呢?
+现象呢是上面demo这样,某些异常支持跨进程传递,某些不支持.那这是基于什么原理呢?我们观察到在客户端调用服务端方法的时候,使用Parcel的readException()读了一下异常,看下这个方法
 
-- [ ] todo xfhy Parcel#writeException()
-- [ ] todo xfhy Parcel#readException()
-- [ ] android.os.Binder.execTransact()
+```java
+/**
+* Special function for reading an exception result from the header of
+* a parcel, to be used after receiving the result of a transaction.  This
+* will throw the exception for you if it had been written to the Parcel,
+* otherwise return and let you read the normal result data from the Parcel.
+*
+* @see #writeException
+* @see #writeNoException
+*/
+public final void readException() {
+    int code = readExceptionCode();
+    if (code != 0) {
+        String msg = readString();
+        readException(code, msg);
+    }
+}
+```
+
+从注释可以看出,它是读取存入的异常结果,然后抛出来.如果没有存入异常,则没事.上面的代码首先会把异常的code拿出来,如果code不是0,说明存在异常.存在异常则最终会走到createExceptionOrNull()构建异常,然后进行抛出.
+
+```java
+/** @hide */
+public Exception createExceptionOrNull(int code, String msg) {
+    switch (code) {
+        case EX_PARCELABLE:
+            if (readInt() > 0) {
+                return (Exception) readParcelable(Parcelable.class.getClassLoader());
+            } else {
+                return new RuntimeException(msg + " [missing Parcelable]");
+            }
+        case EX_SECURITY:
+            return new SecurityException(msg);
+        case EX_BAD_PARCELABLE:
+            return new BadParcelableException(msg);
+        case EX_ILLEGAL_ARGUMENT:
+            return new IllegalArgumentException(msg);
+        case EX_NULL_POINTER:
+            return new NullPointerException(msg);
+        case EX_ILLEGAL_STATE:
+            return new IllegalStateException(msg);
+        case EX_NETWORK_MAIN_THREAD:
+            return new NetworkOnMainThreadException();
+        case EX_UNSUPPORTED_OPERATION:
+            return new UnsupportedOperationException(msg);
+        case EX_SERVICE_SPECIFIC:
+            return new ServiceSpecificException(readInt(), msg);
+        default:
+            return null;
+    }
+}
+```
+
+好了,读取异常倒是有了.那么是怎么写到Parcel中的呢?其实是通过Parcel的writeException()实现的,来看下实现:
+
+```java
+/**
+* Special function for writing an exception result at the header of
+* a parcel, to be used when returning an exception from a transaction.
+* Note that this currently only supports a few exception types; any other
+* exception will be re-thrown by this function as a RuntimeException
+* (to be caught by the system's last-resort exception handling when
+* dispatching a transaction).
+*
+* <p>The supported exception types are:
+* <ul>
+* <li>{@link BadParcelableException}
+* <li>{@link IllegalArgumentException}
+* <li>{@link IllegalStateException}
+* <li>{@link NullPointerException}
+* <li>{@link SecurityException}
+* <li>{@link UnsupportedOperationException}
+* <li>{@link NetworkOnMainThreadException}
+* </ul>
+*
+* @param e The Exception to be written.
+*
+* @see #writeNoException
+* @see #readException
+*/
+public final void writeException(@NonNull Exception e) {
+    AppOpsManager.prefixParcelWithAppOpsIfNeeded(this);
+
+    //获得该异常的code 只需要传递code、异常message和调用栈,然后在读取异常时根据这些code构建异常就行
+    int code = getExceptionCode(e);
+    writeInt(code);
+    StrictMode.clearGatheredViolations();
+    //如果是不支持的异常,则直接throw RuntimeException
+    if (code == 0) {
+        if (e instanceof RuntimeException) {
+            throw (RuntimeException) e;
+        }
+        throw new RuntimeException(e);
+    }
+    writeString(e.getMessage());
+    final long timeNow = sParcelExceptionStackTrace ? SystemClock.elapsedRealtime() : 0;
+    if (sParcelExceptionStackTrace && (timeNow - sLastWriteExceptionStackTrace
+            > WRITE_EXCEPTION_STACK_TRACE_THRESHOLD_MS)) {
+        sLastWriteExceptionStackTrace = timeNow;
+        writeStackTrace(e);
+    } else {
+        writeInt(0);
+    }
+    ......
+}
+
+/** @hide */
+//给每个异常进行编号 
+public static int getExceptionCode(@NonNull Throwable e) {
+    int code = 0;
+    if (e instanceof Parcelable
+            && (e.getClass().getClassLoader() == Parcelable.class.getClassLoader())) {
+        // We only send Parcelable exceptions that are in the
+        // BootClassLoader to ensure that the receiver can unpack them
+        code = EX_PARCELABLE;
+    } else if (e instanceof SecurityException) {
+        code = EX_SECURITY;
+    } else if (e instanceof BadParcelableException) {
+        code = EX_BAD_PARCELABLE;
+    } else if (e instanceof IllegalArgumentException) {
+        code = EX_ILLEGAL_ARGUMENT;
+    } else if (e instanceof NullPointerException) {
+        code = EX_NULL_POINTER;
+    } else if (e instanceof IllegalStateException) {
+        code = EX_ILLEGAL_STATE;
+    } else if (e instanceof NetworkOnMainThreadException) {
+        code = EX_NETWORK_MAIN_THREAD;
+    } else if (e instanceof UnsupportedOperationException) {
+        code = EX_UNSUPPORTED_OPERATION;
+    } else if (e instanceof ServiceSpecificException) {
+        code = EX_SERVICE_SPECIFIC;
+    }
+    return code;
+}
+```
+
+代码逻辑比较清晰,首先根据当前写入的异常判断其是否是支持的异常.如果是则将其code、异常message和调用栈写入Parcel,readException()的时候就可以根据这些信息进行构建异常了;如果不是支持的异常,则直接throw RuntimeException.
+
+那服务端抛出的异常是通过什么流程到Parcel的writeException里面的呢?注意上面demo中我们调用unSupportException时的调用栈:
+
+```log
+7049-7061/com.xfhy.allinone E/JavaBinder: *** Uncaught remote exception!  (Exceptions are not yet supported across processes.)
+    java.lang.RuntimeException
+        at com.xfhy.allinone.ipc.binder.BinderService$TestBinder.onTransact(BinderService.kt:38)
+        at android.os.Binder.execTransact(Binder.java:565)
+```
+看到了,直接来到`android.os.Binder.execTransact()`
+
+```java
+// Entry point from android_util_Binder.cpp's onTransact
+//这个方法不是给java层调用的,这是从android_util_Binder.cpp的onTransact回调过来的
+@UnsupportedAppUsage
+private boolean execTransact(int code, long dataObj, long replyObj,
+        int flags) {
+    // At that point, the parcel request headers haven't been parsed so we do not know what
+    // WorkSource the caller has set. Use calling uid as the default.
+    final int callingUid = Binder.getCallingUid();
+    final long origWorkSource = ThreadLocalWorkSource.setUid(callingUid);
+    try {
+        return execTransactInternal(code, dataObj, replyObj, flags, callingUid);
+    } finally {
+        ThreadLocalWorkSource.restore(origWorkSource);
+    }
+}
+
+//核心代码
+private boolean execTransactInternal(int code, long dataObj, long replyObj, int flags,
+        int callingUid) {
+    Parcel data = Parcel.obtain(dataObj);
+    Parcel reply = Parcel.obtain(replyObj);
+    boolean res;
+    try {
+        res = onTransact(code, data, reply, flags);
+    } catch (RemoteException|RuntimeException e) {
+        reply.setDataSize(0);
+        reply.setDataPosition(0);
+        reply.writeException(e);
+        res = true;
+    }
+    checkParcel(this, code, reply, "Unreasonably large binder reply buffer");
+    reply.recycle();
+    data.recycle();
+
+    return res;
+}
+```
+
+`android.os.Binder`里面是将onTransact调用进行catch了的,也就是服务端有抛出异常,就会在catch代码块里面写入异常到reply中.而在writeException的时候,如果是不支持的异常则会抛出RuntimeException,Java层这边没有进行捕获,是在Native层进行捕获的.具体是在`/frameworks/base/core/jni/android_util_Binder.cpp#onTransact()`.
+
+而对于Error,Binder没有进行处理,直接就会抛出来,服务端没有进行处理就会崩溃.
 
 ### 9.11 Binder在同进程中使用时会影响效率么？
+
+
+
 ### 9.12 Intent使用过程中的限制
 
 ## 资料
