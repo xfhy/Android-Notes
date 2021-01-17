@@ -1316,9 +1316,37 @@ private boolean execTransactInternal(int code, long dataObj, long replyObj, int 
 
 ### 9.11 Binder在同进程中使用时会影响效率么？
 
+先试一下同一个进程是否为同一个Binder对象,我在客户端的onServiceConnected()和服务端(和客户端相同进程)的onBind方法分别打印出Binder对象的引用
 
+```log
+8068-8068/com.xfhy.allinone D/xfhy_binder: Server : onBind com.xfhy.allinone.ipc.binder.BinderService$TestBinder@5f96722
+8068-8068/com.xfhy.allinone D/xfhy_binder: onServiceConnected  com.xfhy.allinone.ipc.binder.BinderService$TestBinder@5f96722
+```
+
+显而易见,这是相同的Binder对象.既然是相同的Binder对象,那么调用其方法应该是不需要走跨进程那块的序列化和反序列化流程的.写个demo验证一下,我在服务端的onTransact()中打一下日志,然后客户端调用服务端的方法,看看走不走这里过:
+
+```kotlin
+private val mBinder: Binder = object : IPersonManager.Stub() {
+
+    override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean {
+        val onTransact = super.onTransact(code, data, reply, flags)
+        log(TAG,"Server : onTransact()")
+        return onTransact
+    }
+}
+```
+
+从输出结果中我发现这个onTransact是没有进行调用的.而这个onTransact()是`Binder#transact()`调用的,而`Binder#transact()`是跨进程时通过binder驱动进行IPC的.既然没有走跨进程那一套逻辑,我认为是不影响效率的.
 
 ### 9.12 Intent使用过程中的限制
+
+Intent因可以用来启四大组件,故平时我们使用的次数挺多的,启动时可以通过Intent携带少量的数据.在传递数据的时候Intent只能通过putExtra()传递一些基本的数据类型,当然还可以通过putExtra()传入一个Bundle对象,通过这个Bundle对象可以传递序列化(Serializable或者Parcelable)的对象.
+
+即使是同一个进程Activity之间用Intent传递对象A,A也是需要序列化的.传递之后,另一个Activity拿到的A对象,其实是经过反序列化之后拿到的.
+
+相当于是说,我们用Intent传递数据时,是需要将数据全部序列化的.为什么有这个限制?其实是因为在启动组件的时候,是需要通过AMS验证的.app这边首先给AMS发个消息(跨进程通信),我要启动某个组件,AMS验证之后,开始启动相应的组件(也是跨进程通信,需要告诉app这边的ActivityThread,由它完成启动).虽然是同进程之间启动Activity,但是中间涉及到与AMS进行通信,所以需要将传输数据序列化,才能在进程之间"传递".
+
+因为Intent携带的数据是需要经过Binder机制来进行IPC的,所以能携带的数据大小也受到Binder的限制,不能传递太大的数据.详见9.7节.
 
 ## 资料
 
