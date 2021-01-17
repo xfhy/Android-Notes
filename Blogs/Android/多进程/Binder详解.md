@@ -1,17 +1,68 @@
 
+#### 目录
+
+- [0. Binder到底是什么?](#head1)
+- [1. 为什么采用Binder作为IPC机制](#head2)
+	- [1.1 Linux现有的IPC方式](#head3)
+	- [1.2 采用Binder的理由分析](#head4)
+- [2. 概述](#head5)
+	- [2.1 IPC原理](#head6)
+	- [2.2 Binder原理](#head7)
+	- [2.3 Android Binder架构](#head8)
+- [3. Binder 通信模型](#head9)
+	- [3.1 Binder驱动](#head10)
+	- [3.2 ServiceManager 与 实名Binder](#head11)
+	- [3.3 Client 获得实名Binder的引用](#head12)
+	- [3.4 匿名Binder](#head13)
+- [4. Binder协议](#head14)
+	- [4.1 BINDER_WRITE_READ 之写操作](#head15)
+	- [4.2 BINDER_WRITE_READ 从Binder读出数据](#head16)
+	- [4.3 struct `binder_transaction_data`: 收发数据包结构](#head17)
+- [5. Binder表述](#head18)
+	- [5.1 Binder在应用程序中的表述](#head19)
+		- [5.1.1 Binder在Server端的表述 - Binder实体](#head20)
+		- [5.1.2 Binder 在Client端的表述 - Binder引用](#head21)
+	- [5.2 Binder在传输数据中的表述](#head22)
+		- [5.2.1 文件形式的Binder](#head23)
+	- [5.3 Binder在驱动中的表述](#head24)
+		- [5.3.1 Binder实体在驱动中的表述](#head25)
+		- [5.3.2 Binder引用在驱动中的表述](#head26)
+- [6. Binder内存映射和接收缓存区管理](#head27)
+- [7. Binder 接收线程管理](#head28)
+- [8. 数据包接收队列与(线程)等待队列管理](#head29)
+- [9. Interview](#head30)
+	- [9.1 Binder模型原理步骤说明](#head31)
+	- [9.2 谈谈你对Binder的理解](#head32)
+		- [9.2.1 Binder是干什么的](#head33)
+		- [9.2.2 Binder存在的意义](#head34)
+		- [9.2.3 Binder的架构原理](#head35)
+	- [9.3 Android Framework IPC方式](#head36)
+	- [9.4 一次完整的 IPC 通信流程是怎样的？](#head37)
+	- [9.5 Binder 对象跨进程传递的原理是怎么样的？](#head38)
+	- [9.6 Binder OneWay 机制](#head39)
+	- [9.7 Binder传输大小限制](#head40)
+		- [9.7.1 传递大数据案例](#head41)
+		- [9.7.2 探究Binder传递大小限制](#head42)
+	- [9.8 Binder可以同时处理的并发请求量是多少？](#head43)
+	- [9.9 Binder需要传输大数据该怎么办？](#head44)
+	- [9.10 Binder通信过程中抛出异常、Error怎么办？系统是怎么处理的？](#head45)
+	- [9.11 Binder在同进程中使用时会影响效率么？](#head46)
+	- [9.12 Intent使用过程中的限制](#head47)
+- [ 资料](#head48)
+
 > 文中用到的[demo地址](https://github.com/xfhy/AllInOne/tree/master/app/src/main/java/com/xfhy/allinone/ipc)
 
-## 0. Binder到底是什么?
+## <span id="head1">0. Binder到底是什么?</span>
 
 - 从机制、模型角度来说,Binder是一种Android中实现跨进程通信(IPC)的方式,即**Binder机制模型**.
 - 从模型的结果、组成来说,Binder是一种虚拟的物理设备驱动,即**Binder驱动**.连接Service、Client、Service Manager进程
 - 从Android代码的实现角度来说,Binder是一个类,实现了IBinder接口,即**Binder类**. 将Binder机制模型以代码的形式具体实现在Android中.
 
-## 1. 为什么采用Binder作为IPC机制
+## <span id="head2">1. 为什么采用Binder作为IPC机制</span>
 
 Android开发了新的IPC机制Binder,而且大量采用Binder机制进行IPC,少量使用已有的IPC机制.这是为什么?
 
-### 1.1 Linux现有的IPC方式
+### <span id="head3">1.1 Linux现有的IPC方式</span>
 
 1. 管道: 管道是半双工的,管道的描述符只能读或写,想要既可以读也可以写就需要两个描述符,而且管道一般用在父子进程之间;而且缓存区大小比较有限;
 2. 消息队列: 信息复制2次,额外的CPU消耗;不适合频繁或信息量大的通信;
@@ -20,7 +71,7 @@ Android开发了新的IPC机制Binder,而且大量采用Binder机制进行IPC,�
 5. 信号量: 常作为锁机制,防止某进程正在访问共享资源时,其他进程也访问该资源.因此,主要作为进程间以及同一进程内不同线程之间的同步手段;
 6. 信号: 不适合用于信息交换,更适合进程中断控制,比如非法内存访问,杀死某个进程等.
 
-### 1.2 采用Binder的理由分析
+### <span id="head4">1.2 采用Binder的理由分析</span>
 
 (1) **从性能的角度,数据拷贝次数**: Binder数据只需要拷贝一次,而管道、消息队列、Socket都需要2次,但共享内存方式一次内存拷贝都不需要;从性能角度,Binder性能仅次于共享内存
 
@@ -30,15 +81,15 @@ Android开发了新的IPC机制Binder,而且大量采用Binder机制进行IPC,�
 
 (4) 语言层面: Linux是基于C语言(面向过程的语言),而Android是基于Java语言(面向对象的语句),而对于Binder恰恰也符合面向对象的思想,将进程间通信转化为通过对某个Binder对象的引用调用该对象的方法,而其独特之处在于Binder对象是一个可以跨进程引用的对象,它的实体位于一个进程中,而它的引用却遍布于系统的各个进程之中.可以从一个进程传给其它进程,让大家都能访问同一Server,就像将一个对象或引用赋值给另一个引用一样.Binder模糊了进程边界,淡化了进程间通信过程,整个系统仿佛运行于同一个面向对象的程序之中.从语言层面,Binder更适合基于面向对象语言的Android系统,对于Linux系统可能会有点“水土不服”.
 
-## 2. 概述
+## <span id="head5">2. 概述</span>
 
 Android四大组件所涉及的多进程间的通信底层都是依赖于Binder IPC机制.例如进程A中Activity向进程B中Service进行通信,这便需要依赖于Binder IPC.不仅如此,整个Android系统架构中,大量采用了Binder机制作为IPC方案,当然也存在部分其他的IPC方式,比如Zygote通信便是采用socket.
 
-### 2.1 IPC原理
+### <span id="head6">2.1 IPC原理</span>
 
 对于用户空间,不同进程之间彼此是不能共享的,而内核空间却是可以共享的.Client进程向Server进程通信,恰恰是利用进程间可共享的内核内存空间来完成底层通信工作的,Client端与Server端进程往往采用ioctl等方法跟内核空间的驱动进行交互.
 
-### 2.2 Binder原理
+### <span id="head7">2.2 Binder原理</span>
 
 Binder通信采用C/S架构,从组件视角来说,包含Client、Server、ServiceManager以及binder驱动,其中ServiceManager用于管理系统中的各种服务.
 
@@ -54,7 +105,7 @@ Client/Server/ServiceManage之间的相互通信都是基于Binder机制,既然�
 
 Client,Server,ServiceManager之间交互图中用虚线表示,是因为它们之间不是直接交互的,而是通过与Binder驱动进行交互的,从而实现IPC通信方式.其中Binder驱动位于内核空间,Client、Server、ServiceManager位于用户空间.Binder驱动和ServiceManager可以看做是Android平台的基础架构,而Client和Server是Android的应用层,开发人员只需自定义实现Client、Server端,借助Android的基本平台架构便可以直接进行IPC通信.
 
-### 2.3 Android Binder架构
+### <span id="head8">2.3 Android Binder架构</span>
 
 Zygote孵化出`system_server`进程后,在`system_server`进程中初始化支持整个Android framework的各种各样的Service,而这些Service大体分为Java层Framework和Native Framework层(C++)的Service,几乎都是基于Binder IPC机制
 
@@ -63,31 +114,31 @@ Zygote孵化出`system_server`进程后,在`system_server`进程中初始化支�
 
 > Gityuan: 无Binder不Android
 
-## 3. Binder 通信模型
+## <span id="head9">3. Binder 通信模型</span>
 
 Binder框架定义了四个角色:Server,Client,ServiceManager,Binder驱动.其中Server,Client,ServiceManager运行于用户空间,驱动运行于内核空间.这四个角色的关系和互联网类似:Server是服务器,Client是客户端,ServiceManager是域名服务器(DNS),驱动是路由器
 
-### 3.1 Binder驱动
+### <span id="head10">3.1 Binder驱动</span>
 
 Binder驱动是通信的核心.虽然名字叫"驱动",但实际上和硬件设备没有任何关系,只是实现方式和设备驱动程序是一样的: 工作于内核态,提供open(),mmap(),poll(),ioctl()等标准文件操作,以字符驱动设备中的misc设备注册在设备目录`/dev`下,用户通过`/dev/binder`访问它.驱动负责进程之间Binder通信的建立,Binder在进程之间的传递,Binder引用计数,数据包在进程之间的传递和交互等一系列底层支持.驱动和应用程序之间定义了一套接口协议,主要功能由ioctl()接口实现,不提供read()、write()接口,因为ioctl()灵活方便,且能够一次调用实现先写后读以满足同步交互,而不必分别调用read()和write().
 
-### 3.2 ServiceManager 与 实名Binder
+### <span id="head11">3.2 ServiceManager 与 实名Binder</span>
 
 ServiceManager的作用是将字符形式的Binder名字转化成Client中对该Binder的引用,使得Client能够通过Binder名字获得对Server中Binder实体的引用.注册了名字的Binder叫实名Binder.Server创建了Binder实体,为其取一个字符形式、可读易记的名字,将这个Binder连同名字以数据包的形式通过Binder驱动发送给ServiceManager,通知ServiceManager注册一个名叫张三的Binder,它位于某个Server中.驱动为这个穿过进程边界的Binder创建位于内核中的实体节点以及ServiceManager对实体的引用,将名字及新建的引用打包传递给ServiceManager.ServiceManager收到数据包后,从中取出名字和引用填入一张查找表中.
 
 事有蹊跷: ServiceManager是一个进程,Server是另一个进程,Server向ServiceManager注册Binder必然会涉及进程间通信.当前实现的是进程间通信却又要用到进程间通信,这就好像蛋可以孵出鸡之前却是要找只鸡来孵蛋. Binder的实现非常巧妙: 预先创造一只鸡来孵蛋.ServiceManager和其他进程同样采用Binder通信,ServiceManager是Server端,有自己的Binder对象(实体),其他进程都是Client,需要通过这个Binder的引用来实现Binder的注册,查询和获取.ServiceManager提供的Binder比较特殊,它没有名字也不需要注册,当一个进程使用`BINDER_SET_CONTEXT_MGR`命令将自己注册成ServiceManager时Binder驱动会自动为它创建Binder实体(这是那只预先造好的鸡).其次这个Binder的引用在所有Client中都固定为0而无须通过其他手段获得.也就是说,一个Server若要向ServiceManager注册自己的Binder就必须通过0这个引用号和ServiceManager的Binder进行通信.类比网络通信,0号引用就好比域名服务器的地址,你必须预先手工或动态配置好.要注意这里说的Client是相对ServiceManager而言的,一个应用程序可能是个提供服务的Server,但对ServiceManager来说它仍然是个Client.
 
-### 3.3 Client 获得实名Binder的引用
+### <span id="head12">3.3 Client 获得实名Binder的引用</span>
 
 Server向ServiceManager注册了Binder实体及其名字后,Client就可以通过名字获得该Binder的引用了.Client也利用保留的0号引用向ServiceManager请求访问某个Binder: 我申请获得名字叫张三的Binder的引用.ServiceManager收到这个连接请求,从请求数据包里获得Binder的名字,在查找表里找到该名字对应的条目,从条目中取出Binder的引用,将该引用作为回复发送给发起请求的Client.从面向对象的角度,这个Binder对象现在有了2个引用:一个位于ServiceManager中,一个位于发起请求的Client中.如果接下来有更多的Client请求该Binder,系统中就会有更多的引用指向该Binder,就像Java里一个对象存在多个引用一样.而且类似的这些指向Binder的引用是强类型,从而确保只要有引用Binder实体就不会被释放掉.通过以上过程可以看出,ServiceManager像个火车票代售点,收集了所有火车的车票,可以通过它购买到乘坐各趟火车的票-得到某个Binder的引用.
 
-### 3.4 匿名Binder
+### <span id="head13">3.4 匿名Binder</span>
 
 并不是所有Binder都需要注册给ServiceManager.Server端可以通过已经建立的Binder连接将创建的Binder实体传给Client,这条已经建立的Binder连接必须是通过实名Binder实现.由于这个Binder没有向ServiceManager注册名字,所以是个匿名Binder.Client将会收到这个匿名Binder的引用,通过这个引用向位于Server中的实体发送请求.匿名Binder为通信双方建立一条私密通道,只要Server没有把匿名Binder发送给别的进程,别的进程就无法通过穷举或猜测等任何方式获得该Binder的引用,向该Binder发送请求.
 
 ![Binder通信示例](https://raw.githubusercontent.com/xfhy/Android-Notes/master/Images/Binder%E9%80%9A%E4%BF%A1%E7%A4%BA%E4%BE%8B.png)
 
-## 4. Binder协议
+## <span id="head14">4. Binder协议</span>
 
 Binder协议基本格式是:命令+数据,使用`ioctl(fd,cmd,arg)`函数实现交互.命令由参数cmd承载,数据由参数arg承载,随cmd不同而不同.
 
@@ -107,7 +158,7 @@ struct binder_write_read {
 
 最常用的命令是`BINDER_WRITE_READ`.该命令的参数包含两部分数据:一部分是向Binder写入的数据,一部分是要从Binder读出的数据,驱动程序先处理写部分再处理读部分.这样安排的好处是应用程序可以很灵活地处理命令的同步或异步.例如想要发送异步命令可以只填入写部分而将`read_size`置为0,若要只从Binder获得数据可以将写部分置空即`write_size`置为0;若要发送请求并同步等待返回数据可以将两部分都置上.
 
-### 4.1 BINDER_WRITE_READ 之写操作
+### <span id="head15">4.1 BINDER_WRITE_READ 之写操作</span>
 
 Binder写操作数据时格式同样也是:命令+数据.这时命令和数据都存放在`binder_write_read`结构`write_buffer`域指向的内存空间里,多条命令连续存放.数据紧接着存放在命令后面,格式根据命令不同而不同.最常用的命令是`BC_TRANSACTION/BC_REPLY`命令.
 
@@ -115,7 +166,7 @@ Binder写操作数据时格式同样也是:命令+数据.这时命令和数据�
 
 Binder请求和应答数据就是通过`BC_TRANSACTION/BC_REPLY`这对命令发送给接收方.这对命令所承载的数据包由结构体`struct binder_transaction_data`定义.Binder交互有同步和异步之分,利用`binder_transaction_data`中flag域区分.如果flag域的`TF_ONE_WAY`位为1则为异步交互,即Client端发送完请求交互即结束,Server端不再返回`BC_REPLY`数据包;否则Server会返回`BC_REPLY`数据包,Client端必须等待接收完该数据包方才完成一次交互.
 
-### 4.2 BINDER_WRITE_READ 从Binder读出数据
+### <span id="head16">4.2 BINDER_WRITE_READ 从Binder读出数据</span>
 
 从Binder里读出的数据格式和向Binder中写入的数据格式一样,采用`消息ID+数据`形式,并且多条消息可以连续存放.
 
@@ -123,7 +174,7 @@ Binder请求和应答数据就是通过`BC_TRANSACTION/BC_REPLY`这对命令发�
 
 和写数据一样,其中最重要的消息是`BR_TRANSACTION 或BR_REPLY`，表明收到了一个格式为`binder_transaction_data`的请求数据包`BR_TRANSACTION`或返回数据包`BR_REPLY`.
 
-### 4.3 struct `binder_transaction_data`: 收发数据包结构
+### <span id="head17">4.3 struct `binder_transaction_data`: 收发数据包结构</span>
 
 该结构是Binder接收/发送数据包的标准格式.
 
@@ -142,7 +193,7 @@ unsigned int flags; | 与交互相关的标志位，其中最重要的是`TF_ONE
 
 对于接收方来说,该结构只相当于一个定长的消息头,真正的用户数据存放在`data.buffer`所指向的缓存区中.如果发送方在数据中嵌入了一个或多个Binder,接收到的数据包中同样会用`data.offsets`和`offset_size`指出每个Binder的位置和总个数. 不过通常接收方可以忽略这些信息,因为接收方是知道数据格式的,参考双方约定的格式定义就能知道这些Binder在什么位置.
 
-## 5. Binder表述
+## <span id="head18">5. Binder表述</span>
 
 考察一次Binder通信的全过程会发现,Binder存在于系统以下几个部分中:
 
@@ -152,13 +203,13 @@ unsigned int flags; | 与交互相关的标志位，其中最重要的是`TF_ONE
 
 在系统不同部分,Binder实现的功能不同,表现形式也不一样.接下来逐一探讨Binder在各部分所扮演的角色和使用的数据结构.
 
-### 5.1 Binder在应用程序中的表述
+### <span id="head19">5.1 Binder在应用程序中的表述</span>
 
 本文假设应用程序是用面向对象语言实现的.
 
 Binder本质上只是一种底层通信方式,和具体服务没有关系.为了提供具体服务,Server必须提供一套接口函数以便Client通过远程访问使用各种服务.这时通常采用Proxy设计模式: 将接口函数定义在一个抽象类中,Server和Client都会以该抽象类为基类实现所有接口函数,所不同的是Server端是真正的功能实现,而Client端是对这些函数远程调用请求的包装.如何将Binder和Proxy设计模式结合起来是应用程序面向对象Binder通信的根本问题.
 
-#### 5.1.1 Binder在Server端的表述 - Binder实体
+#### <span id="head20">5.1.1 Binder在Server端的表述 - Binder实体</span>
 
 作为Proxy设计模式的基础,首先定义一个抽象接口类封装Server所有功能,其中包含一系列纯虚函数留待Server和Proxy各自实现.由于这些函数需要跨进程调用,需为其一一编号,从而Server可以根据收到的编号决定调用哪个函数.其次就要引用Binder了.Server端定义另一个Binder抽象类(我理解就是IXX.Stub)处理来自Client的Binder请求数据包,其中最重要的成员是虚函数onTransact().该函数分析收到的数据包,调用相应的接口函数处理请求.
 
@@ -166,7 +217,7 @@ Binder本质上只是一种底层通信方式,和具体服务没有关系.为了
 
 那么各个Binder实体的onTransact()又是什么时候调用呢? 这就需要驱动参与了. 前面说过,Binder实体须要以Binder传输结构`flat_binder_object`形式发生给其他进程才能建立Binder通信,而Binder实体指针就存放在该结构的handle域中.驱动根据Binder位置数组从传输数据中获取该Binder的传输结构,为它创建位于内核中的Binder节点,将BInder实体指针记录在该节点中.如果接下来有其他进程向该Binder发送数据,驱动会根据节点中记录的信息将Binder实体指针填入`binder_transaction_data`的target.ptr中返回给接收线程.接收线程从数据包中取出该指针,`reinterpret_cast`成Binder抽象类并调用onTransact()函数.由于这是个虚函数,不同的Binder实体中有各自的实现,从而可以调用到不同Binder实体提供的onTransact().  
 
-#### 5.1.2 Binder 在Client端的表述 - Binder引用
+#### <span id="head21">5.1.2 Binder 在Client端的表述 - Binder引用</span>
 
 作为Proxy设计模式的一部分,Client端的Binder同样要继承Server提供的公共接口类并实现公共函数(IXX.Stub.Proxy).但这不是真正的实现,而是对远程函数调用的包装: 将函数参数打包,通过Binder向Server发送申请并等待返回值.为此Client端还要知道Binder实体的相关信息,即对Binder实体的引用(在onServiceConnected中拿到的).该引用是由ServiceManager转发过来的,对实名Binder的引用或是由另一个进程直接发送过来的对匿名Binder的引用.
 
@@ -213,7 +264,7 @@ private static class Proxy implements com.xfhy.allinone.ipc.aidl.IPersonManager 
 
 由于继承了同样的公共接口类,Client Binder提供了与Server Binder一样的函数原型,使用户感觉不出Server是运行在本地还是远端.Client Binder中,公共接口函数的包装方式是: 创建一个`binder_transaction_data`数据包,将其对应的编码填入code域,将调用该函数所需的参数填入data.buffer指向的缓存中,并指明数据包的目的地,那就是已经获得的对Binder实体的引用,填入数据包的target.handle中.注意这里和Server的区别: 实际上target域是个联合体,包括ptr和handle两个成员,前者用于接收数据包的Server,指向Binder实体对应的内存空间;后者用于作为请求方的Client,存放Binder实体的引用,告知驱动数据包将路由给哪个实体.数据包准备好后,通过驱动接口发送出去.经过`BC_TRANSACTION/BC_REPLY`回合完成函数的远程调用并得到返回值.
 
-### 5.2 Binder在传输数据中的表述
+### <span id="head22">5.2 Binder在传输数据中的表述</span>
 
 Binder可以塞在数据包的有效数据中越进程边界从一个进程传递给另一个进程,这些传输中的Binder用结构`flat_binder_object`表示,如下表所示:
 
@@ -236,7 +287,7 @@ void *cookie; | 该域只对Binder实体有效，存放与该Binder有关的附�
 `BINDER_TYPE_HANDLE`,`BINDER_TYPE_WEAK_HANDLE` | 获得Binder引用的进程都能发送该类型Binder。驱动根据handle域提供的引用号查找建立在内核的引用。如果找到说明引用号合法，否则拒绝该发送请求。| 如果收到的Binder实体位于接收进程中：将ptr域替换为保存在节点中的binder值；cookie替换为保存在节点中的cookie值；type替换为`BINDER_TYPE_(WEAK_)BINDER`。如果收到的Binder实体不在接收进程中：如果是第一次接收则创建实体在内核中的引用；将handle域替换为新建的引用号
 BINDER_TYPE_FD | 验证handle域中提供的打开文件号是否有效，无效则拒绝该发送请求。| 在接收方创建新的打开文件号并将其与提供的打开文件描述结构绑定。
 
-#### 5.2.1 文件形式的Binder
+#### <span id="head23">5.2.1 文件形式的Binder</span>
 
 除了通常意义上用来通信的Binder,还有一种特殊的Binder: 文件Binder.这种Binder的基本思想是: 将文件看成Binder实体,进程打开的文件号看成Binder的引用.一个进程可以将它打开文件的文件号传递给另一个进程,从而另一个进程也打开了同一个文件,就像Binder的引用在进程之间传递一样.
 
@@ -244,7 +295,7 @@ BINDER_TYPE_FD | 验证handle域中提供的打开文件号是否有效，无效
 
 传个文件为啥要这么麻烦,直接将文件名用Binder传过去,接收方用open()打开不就行了吗？其实这还是有区别的.首先对同一个打开文件共享的层次不同：使用文件Binder打开的文件共享linux VFS中的struct file,struct dentry,struct inode结构,这意味着一个进程使用read()/write()/seek()改变了文件指针,另一个进程的文件指针也会改变；而如果两个进程分别使用同一文件名打开文件则有各自的struct file结构,从而各自独立维护文件指针,互不干扰.其次是一些特殊设备文件要求在struct file一级共享才能使用,例如android的另一个驱动ashmem,它和Binder一样也是misc设备,用以实现进程间的共享内存.一个进程打开的ashmem文件只有通过文件Binder发送到另一个进程才能实现内存共享,这大大提高了内存共享的安全性,道理和Binder增强了IPC的安全性是一样的.
 
-### 5.3 Binder在驱动中的表述
+### <span id="head24">5.3 Binder在驱动中的表述</span>
 
 驱动是Binder通信的核心,系统中所有的Binder实体以及每个实体在各个进程中的引用都登记在驱动中.驱动需要记录Binder引用->实体之间多对一的关系;为引用找到对应的实体;在某个进程中为实体创建或查找到对应的引用;记录Binder的归属地(位于哪个进程中);通过管理Binder强/弱引用来创建/销毁Binder实体等等.
 
@@ -252,7 +303,7 @@ BINDER_TYPE_FD | 验证handle域中提供的打开文件号是否有效，无效
 
 接下来随着应用程序不断地注册实名Binder,不断向ServiceManager索要Binder的引用,不断将Binder从一个进程传递给另一个进程,越来越多的Binder以传输结构-`flat_binder_object`的形式穿越驱动做跨进程的迁徙.由于`binder_transaction_data`中data.offset数组的存在,所有流经驱动的Binder都逃不过驱动的眼睛.Binder将这些穿越进程边界的Binder做如下操作: 检查传输结构的type域,如果是`BINDER_TYPE_BINDER`或`BINDER_TYPE_WEAK_BINDER`则创建Binder的实体;如果是`BINDER_TYPE_HANDLE`或`BINDER_TYPE_WEAK_HANDLE`则创建Binder的引用;如果是`BINDER_TYPE_HANDLE`则为进程打开文件,无须创建任何数据结构.随着越来越多的Binder实体或引用在进程间传递,驱动会在内核里创建越来越多的节点或引用,当然这个过程对用户来说是透明的.
 
-#### 5.3.1 Binder实体在驱动中的表述
+#### <span id="head25">5.3.1 Binder实体在驱动中的表述</span>
 
 驱动中的Binder实体也叫"节点",隶属于提供实体的进程,由`struct binder_node`结构来表示:
 
@@ -276,7 +327,7 @@ struct list_head async_todo | 异步交互等待队列；用于分流发往本�
 
 每个进程都有一颗红黑树用于存放创建好的节点,以Binder在用户空间的指针作为索引.每当在传输数据中侦测到一个代表Binder实体的`flat_binder_object`,先以该结构的binder指针为索引搜索红黑树;如果没找到就创建一个新节点添加到树中.由于对于同一个进程来说内存地址是唯一的,所以不会重复建设造成混乱.
 
-#### 5.3.2 Binder引用在驱动中的表述
+#### <span id="head26">5.3.2 Binder引用在驱动中的表述</span>
 
 和实体一样,Binder的引用也是驱动根据传输数据中的`flat_binder_object`创建的,隶属于获得该引用的进程,用`struct binder_ref`结构体表示:
 
@@ -298,7 +349,7 @@ struct binder_ref_death *death; | 应用程序向驱动发送BC_REQUEST_DEATH_NO
 - 对应实体在内核中的地址. 注意这里指的是驱动创建于内核中的`binder_node`结构的地址,而不是Binder实体在用户进程中的地址.实体在内核中的地址是唯一的,用作索引不会产生二义性;但实体可能来自不同用户进程,而实体在不同用户进程中的地址可能重合,不能用来做索引.驱动利用该红黑树在一个进程中快速查找某个Binder实体所对应的引用(一个实体在一个进程中只建立一个引用).
 - 引用号. 引用号是驱动为引用分配的一个32位标识,在一个进程内是唯一的,而在不同进程中可能会有同样的值,这和进程的打开文件号很类似.引用号将返回给应用程序,可以看作Binder引用在用户进程中的句柄.除了0号引用在所有进程里都固定保留给ServiceManager,其他值由驱动动态分配.向Binder发送数据包时,应用程序将引用号填入`binder_transaction_data`结构的target.handle域中表明该数据包的目的Binder.驱动根据该引用号在红黑树中找到引用的`binder_ref`结构,进而通过其node域知道目标Binder实体所在的进程及其他相关信息,实现数据包的路由.
 
-## 6. Binder内存映射和接收缓存区管理
+## <span id="head27">6. Binder内存映射和接收缓存区管理</span>
 
 暂且撇开Binder,考虑一下传统的IPC方式中,数据是怎样从发送端到达接收端的呢?通常的做法是,发送方将准备好的数据存放在缓存区中,调用API通过系统调用进入内核中.内核服务程序在内核空间分配内存,将数据从发送方缓存区复制到内核缓存区中.接收方读数据时也要提供一块缓存区,内核将数据从内核缓存区拷贝到接收方提供的缓存区中并唤醒接收线程,完成一次数据发送.这种存储-转发机制有两个缺陷:首先是效率低下,需要做两次拷贝:用户空间->内核空间->用户空间.Linux使用`copy-from-user()`和`copy-to-user()`实现这两个跨空间拷贝,在此过程中如果使用了高端内存(high memory),这种拷贝需要临时建立/取消页面映射,造成性能损失.其次是接收数据的缓存要由接收方提供,可接收方不知道到底要多大的缓存才够用,只能开辟尽量大的空间或先调用API接收消息头获得消息体大小,再开辟适当的空间接收消息体.两种做法都有不足,不是浪费空间就是浪费时间.
 
@@ -327,7 +378,7 @@ mmap(NULL, MAP_SIZE, PROT_READ, MAP_PRIVATE, fd, 0);
 
 ![Binder跨进程通信核心原理](https://raw.githubusercontent.com/xfhy/Android-Notes/master/Images/Binder%E8%B7%A8%E8%BF%9B%E7%A8%8B%E9%80%9A%E4%BF%A1%E6%A0%B8%E5%BF%83%E5%8E%9F%E7%90%86.png)
 
-## 7. Binder 接收线程管理
+## <span id="head28">7. Binder 接收线程管理</span>
 
 Binder通信实际上是位于不同进程中的线程之间的通信.假如进程S是Server端,提供Binder实体,线程T1从Client进程C1中通过Binder的引用向进程S发送请求.S为了处理这个请求需要启动线程T2,而此时线程T1处于接收返回数据的等待状态.T2处理完请求就会将处理结果返回给T1,T1被唤醒得到处理结果.在这过程中,T2仿佛T1在进程S中的代理,代表T1执行远程任务,而给T1的感觉就像是穿越到S中执行一段代码又回到了C1.为了使这种穿越更加真实,驱动会将T1的一些属性赋给T2,特别是T1的优先级nice,这样T2会使用和T1类似的时间完成任务.很多资料会用"线程迁移"来形容这种现象,容易让人产生误解.一来线程根本不可能再进程之间跳来跳去,而来T2除了和T1优先级一样,其他没有相同之处,包括身份、打开文件、栈大小、信号处理、私有数据等.
 
@@ -345,7 +396,7 @@ Binder通信实际上是位于不同进程中的线程之间的通信.假如进�
 
 关于工作线程的启动,Binder驱动还做了一点小小的优化.当进程P1的线程T1向进程P2发送请求时,驱动会先查看一下线程T1是否也正在处理来自P2某个线程请求但尚未完成(没有发送回复).这种情况通常发生在两个进程都有Binder实体并互相对发时请求时.假如驱动在进程P2中发现了这样的线程,比如说T2,就会要求T2来处理T1的这次请求.因为T2既然向T1发送了请求尚未得到返回包,说明T2肯定(或将会)阻塞在读取返回包的状态.这时候可以让T2顺便做点事情,总比等在那里闲着好.而且如果T2不是线程池中的线程还可以为线程池分担部分工作,减少线程池使用率.
 
-## 8. 数据包接收队列与(线程)等待队列管理
+## <span id="head29">8. 数据包接收队列与(线程)等待队列管理</span>
 
 通常数据传输的接收端有两个队列: 数据包接收队列和(线程)等待队列,用以缓解供需矛盾.当超市里的进货(数据包)太多,货物会堆积在仓库里;购物的人(线程)太多,会排队等待在收银台,道理是一样的.在驱动中,每个进程中有一个全局的接收队列,也叫todo队列,存放不是发往特定线程的数据包;相应地有一个全局等待队列,所有等待从全局接收队列里收数据的线程在该队列里排队.每个线程有自己私有的todo队列,存放发送给该线程的数据包;相应的每个线程都有各自私有的等待队列,专门用于本线程等待接收自己todo队列里的数据.虽然名叫队列,其实线程私有等待队列中最多只有一个线程,即它自己.
 
@@ -360,19 +411,19 @@ Binder通信实际上是位于不同进程中的线程之间的通信.假如进�
 
 接下来探讨一下Binder驱动是如何递交同步交互和异步交互的.我们知道,同步交互和异步交互的区别是同步交互的请求端(Client)在发出请求数据包后需要等待应答端(Server)的返回数据包,而异步交互的发送端发出请求数据包后交互即结束.对于这两种交互的请求数据包,驱动可以不管三七二十一,通通丢到接收端的todo队列中一个个处理.但驱动并没有这么做,而是对异步交互做了限流,令其为同步交互让路,具体做法是: 对于某个Binder实体,只要有一个异步交互没有处理完毕,例如正在被某个线程处理或还在任意一条todo队列里排队,那么接下来发给该实体的异步交互包将不再投递到todo队列中,而是阻塞在驱动为该实体开辟的异步交互接收队列(Binder节点的async_todo域中),但这期间同步交互依旧不受限制直接进入todo队列获得处理,一直到该异步交互处理完毕下一个异步交互方可以脱离异步交互队列进入todo队列中.之所以要这么做是因为同步交互的请求端需要等待返回包,必须迅速处理完毕以免影响请求端的相应速度,而异步交互属于"发射后不管",稍微延时一点不会阻塞其他线程.所以用专门队列将过多的异步交互暂存起来,以免突发大量异步交互挤占Server端的处理能力或耗尽线程池里的线程,进而阻塞同步交互.
 
-## 9. Interview
+## <span id="head30">9. Interview</span>
 
-### 9.1 Binder模型原理步骤说明
+### <span id="head31">9.1 Binder模型原理步骤说明</span>
 
 ![Binder模型原理步骤说明](https://raw.githubusercontent.com/xfhy/Android-Notes/master/Images/Binder%E6%A8%A1%E5%9E%8B%E5%8E%9F%E7%90%86%E6%AD%A5%E9%AA%A4%E8%AF%B4%E6%98%8E.png)
 
-### 9.2 谈谈你对Binder的理解
+### <span id="head32">9.2 谈谈你对Binder的理解</span>
 
-#### 9.2.1 Binder是干什么的
+#### <span id="head33">9.2.1 Binder是干什么的</span>
 
 > 跨进程通信
 
-#### 9.2.2 Binder存在的意义
+#### <span id="head34">9.2.2 Binder存在的意义</span>
 > 选择Binder作为最主要的IPC通信机制的原因: 性能,方便,安全
 
 Binder是Android中一种高效、方便、安全的进程间通信方式.
@@ -381,7 +432,7 @@ Binder是Android中一种高效、方便、安全的进程间通信方式.
 - 方便是指用起来简单直接,Client端使用Service端提供的服务只需要传Service的一个描述符即可,就可以获取到Service提供的服务接口
 - 安全是指Binder验证调用方可靠的身份信息,这个身份信息不能调用方自己填写的,显示是不可靠的,而可靠的身份信息应该是IPC机制本身在内核态中添加.
 
-#### 9.2.3 Binder的架构原理
+#### <span id="head35">9.2.3 Binder的架构原理</span>
 
 Binder通信模型由四方参入,分别是Binder驱动层、Client端、Server端和ServiceManager.
 
@@ -405,7 +456,7 @@ Binder驱动就会把这个请求交给Binder实体对象去处理,也就是是�
 
 ![Binder通信分层架构图](https://raw.githubusercontent.com/xfhy/Android-Notes/master/Images/Binder%E9%80%9A%E4%BF%A1%E5%88%86%E5%B1%82%E6%9E%B6%E6%9E%84%E5%9B%BE.png)
 
-### 9.3 Android Framework IPC方式
+### <span id="head36">9.3 Android Framework IPC方式</span>
 
 Android是基于Linux内核构建的,Linux已经提供了很多进程间通信机制,比如有管道、Socket、共享内存、信号等,在Android Framework中不仅用到了Binder,这些IPC方式也都有使用到.
 
@@ -414,7 +465,7 @@ Android是基于Linux内核构建的,Linux已经提供了很多进程间通信�
 - 共享内存: 共享内存是不需要多次拷贝的,而且特别快.拿到文件描述符分别映射到进程的地址空间即可.在Android中提供了MemoryFile类,里面封装了ashmem机制,也就是Android的匿名共享内存.首先通过`ashmem_create_region` 创建一块匿名共享内存,返回一个fd,然后调用mmap函数给这个fd映射到当前进程地址空间中.
 - 信号: 信号是单向的,而且发出去之后不关心处理结果,知道进程的pid就能发信号了.在杀应用进程的时候会调用Process的killProcess函数发送一个`SIGNAL_KILL`信号.还有Zygote在fork完成一个新的子进程之后还会监听SIGCHLD信号,如果子进程退出之后就会回收相应的资源,避免子进程成为一个僵尸进程.
 
-### 9.4 一次完整的 IPC 通信流程是怎样的？
+### <span id="head37">9.4 一次完整的 IPC 通信流程是怎样的？</span>
 
 - 了解Binder的整体架构设计
 - 了解应用和Binder的驱动交互方式
@@ -428,7 +479,7 @@ Server端与Binder驱动交互:  Server端首先会开启一个Binder线程来�
 
 ![Binder完整通信流程](https://raw.githubusercontent.com/xfhy/Android-Notes/master/Images/Binder%E5%AE%8C%E6%95%B4%E9%80%9A%E4%BF%A1%E6%B5%81%E7%A8%8B_Interview.png)
 
-### 9.5 Binder 对象跨进程传递的原理是怎么样的？
+### <span id="head38">9.5 Binder 对象跨进程传递的原理是怎么样的？</span>
 
 > 跨进程的时候传递的是Binder对象
 
@@ -445,7 +496,7 @@ Server端与Binder驱动交互:  Server端首先会开启一个Binder线程来�
 4. `binder_ref`在目标进程会有一个对应的handle,这个handle往上传,会创建一个BpBinder(Binder在Framework Native层的对象)
 5. BpBinder再往上就会封装一个BinderProxy,再往上就会封装一个业务层的Proxy
 
-### 9.6 Binder OneWay 机制
+### <span id="head39">9.6 Binder OneWay 机制</span>
 
 OneWay就是异步Binder调用,带ONEWAY的waitForResponse参数为null,也就是不需要等待返回结果,而不带ONEWAY的,就是普通AIDL接口,它是需要等待对方回复的.
 
@@ -453,9 +504,9 @@ OneWay就是异步Binder调用,带ONEWAY的waitForResponse参数为null,也就�
 
 ![](https://raw.githubusercontent.com/xfhy/Android-Notes/master/Images/Binder%E7%9A%84OneWay%E6%9C%BA%E5%88%B6%E7%A4%BA%E6%84%8F%E5%9B%BE.png)
 
-### 9.7 Binder传输大小限制
+### <span id="head40">9.7 Binder传输大小限制</span>
 
-#### 9.7.1 传递大数据案例
+#### <span id="head41">9.7.1 传递大数据案例</span>
 
 平时我们在做app的时候,可能会涉及到startActivity时因传递数据过大而导致崩溃的问题.其实不止startActivity,只要是跨进程都会有这个传输数据过大问题,比如sendBroadcast也能造成.下面来还原一下现场
 
@@ -513,7 +564,7 @@ Intent().apply {
 
 熟悉的TransactionTooLargeException异常来了.这里为什么会崩溃?在发送广播时,由Intent携带数据.最后发送广播的任务是需要交给AMS来完成的,而APP与AMS不在同一进程,这就需要涉及到跨进程通信,跨进程通信就要涉及到Binder,而Binder传递数据是有最大内存限制的,并且这个最大内存是APP内共享的.一旦超过这个限制,就会崩溃.
 
-#### 9.7.2 探究Binder传递大小限制
+#### <span id="head42">9.7.2 探究Binder传递大小限制</span>
 
 先说老结论: 跨进程通信无法传递大数据,一次Binder通信最大可以传输是1MB-8KB(说法不准确).
 
@@ -652,7 +703,7 @@ oneway | 4M/2 | (1M-8K)/2
 
 那么平时我们自己写的app能否突破1M-8K的限制,答案是理论上可以,但不建议这样操作,因为Binder驱动中并没有对open,mmap有调用次数的限制,app可以通过JNI调用open,mmap来突破这个限制,但是会对当前正在进行Binder调用的app造成不可想象的问题.当然可以先close Binder驱动.但是一旦app没有了Binder通信,基本就废了,app不能正常使用了.app和其他应用,AMS,WMS的交互都是依赖于Binder通信.
 
-### 9.8 Binder可以同时处理的并发请求量是多少？
+### <span id="head43">9.8 Binder可以同时处理的并发请求量是多少？</span>
 
 无论是`system_server`进程,还是app进程,都是在进程fork完成后,便会在新进程中执行onZygoteInit()的过程中,启动binder线程池. Binder线程创建与其所在进程的创建中产生,Java层进程的创建都是通过Process.start()方法,向Zygote进程发出创建进程的socket消息,Zygote收到消息后会调用Zygote.forkAndSpecialize()来fork出新进程,在新进程中会调用到RuntimeInit.nativeZygoteInit(),该方法经过JNI映射,最终会调用到`app_main.cpp`中的onZygoteInit().
 
@@ -716,7 +767,7 @@ ProcessState::ProcessState()
 - `BINDER_VM_SIZE = (1*1024*1024) - (4096 *2)` 上节分析过,每个进程分配给binder的默认内存大小为1M-8K
 - `DEFAULT_MAX_BINDER_THREADS = 15`,**binder默认的最大可并发访问的线程数为16**. (默认地,每个进程的binder线程池的线程个数上限是15,该上限不统计通过`BC_ENTER_LOOPER`命令创建的binder主线程,只计算`BC_REGISTER_LOOPER`命令创建的线程.)
 
-### 9.9 Binder需要传输大数据该怎么办？
+### <span id="head44">9.9 Binder需要传输大数据该怎么办？</span>
 
 9.7节说过,在使用Binder在进程间传递数据的时候,有时候会抛出TransactionTooLargeException这个异常,这个异常的产生是因为Binder驱动对内存的限制引起的.也就是说,我们不能通过Binder传递太大的数据.官方文档有说明,最大通常限制为1M-8k.
 
@@ -886,7 +937,7 @@ class AshmemActivity : TitleBarActivity() {
 
 如果是同一进程,需要跨Activity传递大数据的话,也是不能把大数据放Intent中的.其实Intent其中还是会涉及到跨进程传递.这时可以把数据放内存中,另一个Activity来进行读取就行,毕竟同一进程嘛.
 
-### 9.10 Binder通信过程中抛出异常、Error怎么办？系统是怎么处理的？
+### <span id="head45">9.10 Binder通信过程中抛出异常、Error怎么办？系统是怎么处理的？</span>
 
 要回答这个问题,直接写段demo,看看效果.demo思路:客户端远程调用服务端,服务端在执行方法过程中抛出异常,看看客户端或者服务端的反应,即可得到结果. 
 
@@ -1314,7 +1365,7 @@ private boolean execTransactInternal(int code, long dataObj, long replyObj, int 
 
 而对于Error,Binder没有进行处理,直接就会抛出来,服务端没有进行处理就会崩溃.
 
-### 9.11 Binder在同进程中使用时会影响效率么？
+### <span id="head46">9.11 Binder在同进程中使用时会影响效率么？</span>
 
 先试一下同一个进程是否为同一个Binder对象,我在客户端的onServiceConnected()和服务端(和客户端相同进程)的onBind方法分别打印出Binder对象的引用
 
@@ -1338,7 +1389,7 @@ private val mBinder: Binder = object : IPersonManager.Stub() {
 
 从输出结果中我发现这个onTransact是没有进行调用的.而这个onTransact()是`Binder#transact()`调用的,而`Binder#transact()`是跨进程时通过binder驱动进行IPC的.既然没有走跨进程那一套逻辑,我认为是不影响效率的.
 
-### 9.12 Intent使用过程中的限制
+### <span id="head47">9.12 Intent使用过程中的限制</span>
 
 Intent因可以用来启四大组件,故平时我们使用的次数挺多的,启动时可以通过Intent携带少量的数据.在传递数据的时候Intent只能通过putExtra()传递一些基本的数据类型,当然还可以通过putExtra()传入一个Bundle对象,通过这个Bundle对象可以传递序列化(Serializable或者Parcelable)的对象.
 
@@ -1348,7 +1399,7 @@ Intent因可以用来启四大组件,故平时我们使用的次数挺多的,启
 
 因为Intent携带的数据是需要经过Binder机制来进行IPC的,所以能携带的数据大小也受到Binder的限制,不能传递太大的数据.详见9.7节.
 
-## 资料
+## <span id="head48"> 资料</span>
 
 - [本文中的demo](https://github.com/xfhy/AllInOne/tree/master/app/src/main/java/com/xfhy/allinone/ipc)
 - [为什么Android 要采用 Binder 作为 IPC 机制？](https://www.zhihu.com/question/39440766/answer/89210950)

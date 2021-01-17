@@ -110,7 +110,23 @@
 
 - [Android进程间通信: 深入浅出AIDL](/Blogs/Android/多进程/AIDL详解.md)
 - [Android进程间通信: Messenger详解](/Blogs/Android/多进程/Messenger详解.md)
-
+- [Android进程间通信: Binder详解](/Blogs/Android/多进程/Binder详解.md)
+    - Binder是什么
+    - 为什么采用Binder作为IPC机制
+    - Binder通信设计
+    - Binder内存映射和接收缓存区管理
+    - Binder模型原理步骤说明
+	- 谈谈你对Binder的理解
+	- Android Framework IPC方式
+	- 一次完整的 IPC 通信流程是怎样的？
+	- Binder 对象跨进程传递的原理是怎么样的？
+	- Binder OneWay 机制
+	- Binder传输大小限制
+	- Binder可以同时处理的并发请求量是多少
+	- Binder需要传输大数据该怎么办？
+	- Binder通信过程中抛出异常、Error怎么办？系统是怎么处理的
+	- Binder在同进程中使用时会影响效率么?
+	- Intent使用过程中的限制
 
 ### About me
 
