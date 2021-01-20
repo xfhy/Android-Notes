@@ -1,7 +1,11 @@
 JVM 学习路线
 ---
 
+### 0. 学习资料
 
+1. [《深入理解Java虚拟机：JVM高级特性与最佳实践（第3版）》-周志明](https://weread.qq.com/web/reader/cf1320d071a1a78ecf19254kc81322c012c81e728d9d180)
+2. [拉钩教育-Android工程师进阶34讲](https://kaiwu.lagou.com/course/courseInfo.htm?courseId=67#/content)
+3. [极客时间-深入拆解Java虚拟机](https://time.geekbang.org/column/intro/108)
 
 ### 1. Java内存区域
 - 程序计数器
