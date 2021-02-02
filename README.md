@@ -60,7 +60,13 @@
 - [反射](/Blogs/Java/基础/反射.md)
 - [注解](/Blogs/Java/基础/注解.md)
 - [反射性能开销原理及优化](/Blogs/Java/基础/反射性能开销原理及优化.md)
-- [Java字节码(class文件)解读](/Blogs/Java/JVM/Java字节码(class文件)解读.md)
+
+### JVM
+
+- [JVM内存数据区域](/Blogs/Java/JVM/1.JVM内存数据区域.md)
+- [HotSpot虚拟机对象](/Blogs/Java/JVM/2.HotSpot虚拟机对象.md)
+- [垃圾收集器与内存分配策略](/Blogs/Java/JVM/3.垃圾收集器与内存分配策略.md)
+- [Java字节码(class文件)解读](/Blogs/Java/JVM/4.Java字节码(class文件)解读.md)
 
 ## 5. Kotlin
 
