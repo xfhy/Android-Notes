@@ -67,6 +67,13 @@
 - [HotSpot虚拟机对象](/Blogs/Java/JVM/2.HotSpot虚拟机对象.md)
 - [垃圾收集器与内存分配策略](/Blogs/Java/JVM/3.垃圾收集器与内存分配策略.md)
 - [Java字节码(class文件)解读](/Blogs/Java/JVM/4.Java字节码(class文件)解读.md)
+- [字节码指令简介](/Blogs/Java/JVM/5.字节码指令简介.md)
+- [虚拟机类加载机制](/Blogs/Java/JVM/6.虚拟机类加载机制.md)
+- [虚拟机字节码执行引擎](/Blogs/Java/JVM/7.虚拟机字节码执行引擎.md)
+- [前端编译与优化](/Blogs/Java/JVM/8.前端编译与优化.md)
+- [后端编译与优化](/Blogs/Java/JVM/9.后端编译与优化.md)
+- [Java内存模型与线程](/Blogs/Java/JVM/10.Java内存模型与线程.md)
+- [线程安全与锁优化](/Blogs/Java/JVM/11.线程安全与锁优化.md)
 
 ## 5. Kotlin
 
