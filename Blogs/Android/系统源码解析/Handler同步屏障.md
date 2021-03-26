@@ -225,6 +225,7 @@ void scheduleTraversals() {
 
 这样的话，我们发送的普通消息可能会被延迟处理，在VSYNC信号到了之后，移除屏障，才得以处理普通消息。改善这个问题的办法是使用异步消息，发送异步消息之后，即时是在等待ASYNC期间也可以执行我们的任务，让我们设置的任务可以更快得被执行（如有必要才这样搞，UI绘制高于一切）且减少主线程的Looper压力。
 
+### 参考资料
 
 - https://mp.weixin.qq.com/s/CNpnS6y2IYobzDa7rAjy1Q
 - https://blog.csdn.net/start_mao/article/details/98963744
