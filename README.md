@@ -94,6 +94,7 @@
 - [死磕Android_ContentProvider_启动](/Blogs/Android/系统源码解析/死磕Android_ContentProvider_启动.md)
 - [LiveData_使用及原理解析](/Blogs/Android/系统源码解析/LiveData_使用及原理解析.md)
 - [Window,Activity,View三者关系](/Blogs/Android/系统源码解析/Window,Activity,View三者关系.md)
+- [Handler同步屏障](/Blogs/Android/系统源码解析/Handler同步屏障.md)
 
 ### 三方库原理
 
