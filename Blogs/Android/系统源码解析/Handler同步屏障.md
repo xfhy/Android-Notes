@@ -191,9 +191,9 @@ public static Handler createAsync(@NonNull Looper looper, @NonNull Callback call
 
 异步消息需要同步屏障的辅助，但同步屏障我们无法手动添加，因此了解系统何时添加和删除同步屏障是必要的。只有这样才能更好地运行异步消息这个功能，知道为什么要用和如何用。了解同步屏障需要简单了解一点屏幕刷新机制的内容。
 
-手机屏幕刷新屏幕有不同的类型，60Hz、120Hz等。屏幕会在每次刷新的时候发出一个VSYNC信号，通知CPU进行绘制计算。具体到我们代码中，可以认为是执行onMeasure、onLayout、onDraw这些方法。
+手机屏幕刷新屏幕有不同的类型，60Hz、120Hz等。屏幕会在每次刷新的时候发出一个Vsync信号，通知CPU进行绘制计算。具体到我们代码中，可以认为是执行onMeasure、onLayout、onDraw这些方法。
 
-View绘制的起点是ViewRootImpl的requestLayout()开始的，这个方法会去执行上面的三大绘制任务：测量、布局、绘制。**调用requestLayout()方法之后，并不会马上开始进行绘制任务，而是会给主线程设置一个同步屏幕，并设置ASYNC信号监听。当ASYNC信号的到来，会发送一个异步消息到主线程Handler，执行我们上一步设置的绘制监听任务，并移除同步屏障。**
+View绘制的起点是ViewRootImpl的requestLayout()开始的，这个方法会去执行上面的三大绘制任务：测量、布局、绘制。**调用requestLayout()方法之后，并不会马上开始进行绘制任务，而是会给主线程设置一个同步屏幕，并设置Vsync信号监听。当Vsync信号的到来，会发送一个异步消息到主线程Handler，执行我们上一步设置的绘制监听任务，并移除同步屏障。**
 
 ```java
 //ViewRootImpl.java
@@ -210,7 +210,7 @@ void scheduleTraversals() {
         mTraversalScheduled = true;
         //插入屏障
         mTraversalBarrier = mHandler.getLooper().getQueue().postSyncBarrier();
-        //监听ASYNC信号，然后发送异步消息 -> 执行绘制任务
+        //监听Vsync信号，然后发送异步消息 -> 执行绘制任务
         mChoreographer.postCallback(
                 Choreographer.CALLBACK_TRAVERSAL, mTraversalRunnable, null);
         if (!mUnbufferedInputDispatch) {
@@ -221,9 +221,9 @@ void scheduleTraversals() {
     }
 }
 ```
-在等待ASYNC信号的时候主线程什么事都没干，这样的好处是保证在ASYNC信号到来时，绘制任务可以被及时执行，不会造成界面卡顿。
+在等待Vsync信号的时候主线程什么事都没干，这样的好处是保证在Vsync信号到来时，绘制任务可以被及时执行，不会造成界面卡顿。
 
-这样的话，我们发送的普通消息可能会被延迟处理，在VSYNC信号到了之后，移除屏障，才得以处理普通消息。改善这个问题的办法是使用异步消息，发送异步消息之后，即时是在等待ASYNC期间也可以执行我们的任务，让我们设置的任务可以更快得被执行（如有必要才这样搞，UI绘制高于一切）且减少主线程的Looper压力。
+这样的话，我们发送的普通消息可能会被延迟处理，在Vsync信号到了之后，移除屏障，才得以处理普通消息。改善这个问题的办法是使用异步消息，发送异步消息之后，即时是在等待Vsync期间也可以执行我们的任务，让我们设置的任务可以更快得被执行（如有必要才这样搞，UI绘制高于一切）且减少主线程的Looper压力。
 
 ### 参考资料
 
