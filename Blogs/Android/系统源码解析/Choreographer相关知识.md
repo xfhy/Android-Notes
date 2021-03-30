@@ -17,25 +17,190 @@ Choreographer对于一些同学来说可能比较陌生，但是，它其实出�
 
 刷新率和帧速率需要协同工作，才能让应用程序的内容显示到屏幕上，GPU会获取图像数据进行绘制，然后硬件负责把内容呈现到屏幕上，这将在应用程序的生命周期中周而复始地发生。
 
-![](https://raw.githubusercontent.com/xfhy/Android-Notes/master/Images/%E5%88%B7%E6%96%B0%E7%8E%87%E5%92%8C%E5%B8%A7%E9%80%9F%E7%8E%87%E5%8D%8F%E5%90%8C%E5%B7%A5%E4%BD%9C.webp)
+<img src="https://raw.githubusercontent.com/xfhy/Android-Notes/master/Images/%E5%88%B7%E6%96%B0%E7%8E%87%E5%92%8C%E5%B8%A7%E9%80%9F%E7%8E%87%E5%8D%8F%E5%90%8C%E5%B7%A5%E4%BD%9C.webp" width="550"/>
 
 刷新率和帧速率并不是总能够保持相同的节奏：
 
-如果帧速率实际上比刷新率快，那么就会出现一些视觉上的问题，下面的图中可以看到，当帧速率在100fps而刷新率只有75Hz的时候，GPU所渲染的图像并非全部都被显示出来。
+- **如果帧速率实际上比刷新率快**
 
-![](https://raw.githubusercontent.com/xfhy/Android-Notes/master/Images/%E5%B8%A7%E9%80%9F%E7%8E%87%E6%AF%94%E5%88%B7%E6%96%B0%E7%8E%87%E5%BF%AB%E7%9A%84%E6%83%85%E5%86%B5.webp)
+那么就会出现一些视觉上的问题，下面的图中可以看到，当帧速率在100fps而刷新率只有75Hz的时候，GPU所渲染的图像并非全部都被显示出来。
+
+<img src="https://raw.githubusercontent.com/xfhy/Android-Notes/master/Images/%E5%B8%A7%E9%80%9F%E7%8E%87%E6%AF%94%E5%88%B7%E6%96%B0%E7%8E%87%E5%BF%AB%E7%9A%84%E6%83%85%E5%86%B5.webp" width="550"/>
 
 刷新率和帧速率不一致会导致屏幕撕裂效果。当GPU正在写入帧数据，从顶部开始，新的一帧覆盖前一帧，并立刻输出一行内容。屏幕开始刷新的时候，实际上并不知道缓冲区是什么状态（不知道缓冲区中的一帧是否绘制完毕，绘制未完的话，就是某些部分是这一帧的，某些部分是上一帧的），因此它从GPU中抓住的帧可能并不是完全完整的。
 
-![](https://raw.githubusercontent.com/xfhy/Android-Notes/master/Images/%E5%B1%8F%E5%B9%95%E6%92%95%E8%A3%82%E7%8E%B0%E8%B1%A1.webp)
+<img src="https://raw.githubusercontent.com/xfhy/Android-Notes/master/Images/%E5%B1%8F%E5%B9%95%E6%92%95%E8%A3%82%E7%8E%B0%E8%B1%A1.webp" width="550"/>
+
+目前Android的双缓冲（或者三缓冲、四缓冲）是非常有效的，当GPU将一帧写入一个后缓冲的存储器，而存储器中的次级区域被称为帧缓冲，当写入下一帧时，它会开始填充后缓冲，而帧缓冲保持不变。此时刷新屏幕，它将使用帧缓冲（事先已经绘制好了的），而不是使用正在处于绘制状态的后缓冲，这就是VSYNC的作用。
+
+<img src="https://raw.githubusercontent.com/xfhy/Android-Notes/master/Images/VSYNC%E7%9A%84%E4%BD%9C%E7%94%A8.webp" width="550"/>
+
+- **屏幕刷新率比帧速率快的情况**
+
+如果屏幕刷新率比帧速率快，屏幕会在两帧中显示同一个画面。此时用户会很明显地察觉到动画卡住了或者掉帧，然后又恢复了流畅，这通常被称为闪屏，跳帧，延迟。
+
+<img src="https://raw.githubusercontent.com/xfhy/Android-Notes/master/Images/%E5%B1%8F%E5%B9%95%E5%88%B7%E6%96%B0%E7%8E%87%E6%AF%94%E5%B8%A7%E9%80%9F%E7%8E%87%E5%BF%AB.webp" width="550"/>
 
 **VSYNC是为了解决屏幕刷新率和GPU帧率不一致导致的“屏幕撕裂”问题**。
 
 #### FPS
 
+FPS：Frame Per Second，即每秒显示的帧数，也叫帧率。Android设备的FPS一般是60FPS，即每秒刷新60次，也就是60帧，每一帧的时间最多只有`1000/60=16.67ms`。一旦某一帧的绘制时间超过了限制，就会发生掉帧，用户在连续两帧会看到同样的画面。也就是上面说的屏幕刷新率比帧速率快的情况。
 
+### 2. ViewRootImpl.setView()
 
-### 应用卡顿
+之前写过一篇文章[Window,Activity,View三者关系](https://github.com/xfhy/Android-Notes)，里面提到了ViewRootImpl.setView()是在什么时候被调用的：`ActivityThread.handleResumeActivity()->WindowManagerImpl.addView()->WindowManagerGlobal.addView()->ViewRootImpl.setView()`
+
+```java
+/**
+* We have one child
+*/
+public void setView(View view, WindowManager.LayoutParams attrs, View panelParentView) {
+    synchronized (this) {
+        if (mView == null) {
+            mView = view;
+            ...
+
+            //注释1 开始三大流程（测量、布局、绘制）
+            requestLayout();
+            ...
+            //注释2 添加View到WindowManagerService,这里是利用Binder跨进程通信，调用Session.addToDisplay()
+            //将Window添加到屏幕
+            res = mWindowSession.addToDisplay(mWindow, mSeq, mWindowAttributes,
+                    getHostVisibility(), mDisplay.getDisplayId(), mWinFrame,
+                    mAttachInfo.mContentInsets, mAttachInfo.mStableInsets,
+                    mAttachInfo.mOutsets, mAttachInfo.mDisplayCutout, mInputChannel);
+            ...
+        }
+    }
+}
+```
+
+从ViewRootImpl.requestLayout()开始，既是View的首次绘制流程
+
+```java
+@Override
+public void requestLayout() {
+    if (!mHandlingLayoutInLayoutRequest) {
+        checkThread();
+        mLayoutRequested = true;
+        scheduleTraversals();
+    }
+}
+```
+
+requestLayout()会走到scheduleTraversals()方法，这个方法非常重要，下面单独展开来讲。
+
+### 3. Choreographer 编舞者
+
+> 终于要到Choreographer上场了
+
+```java
+//ViewRootImpl.java
+final class TraversalRunnable implements Runnable {
+    @Override
+    public void run() {
+        doTraversal();
+    }
+}
+final TraversalRunnable mTraversalRunnable = new TraversalRunnable();
+
+void scheduleTraversals() {
+    //注释1 标记是否已经开始了，开始了则不再进入
+    if (!mTraversalScheduled) {
+        mTraversalScheduled = true;
+        //注释2 同步屏障，保证绘制消息（是异步的消息）的优先级
+        mTraversalBarrier = mHandler.getLooper().getQueue().postSyncBarrier();
+        //注释3 监听VSYNC信号，下一次VSYNC信号到来时，执行给进去的mTraversalRunnable
+        mChoreographer.postCallback(
+                Choreographer.CALLBACK_TRAVERSAL, mTraversalRunnable, null);
+        ...
+    }
+}
+```
+
+1. 在一次VSYNC信号期间多次调用scheduleTraversals是没有意义的，所以用了个标志位标记一下
+2. 发送了一个屏障消息，让同步的消息不能执行，只能执行异步消息，而绘制的消息是异步的，保证了绘制的消息的优先级。绘制任务肯定高于其他的同步任务的。关于Handler同步屏障的具体详情可以阅读一下我之前写的一篇文章[Handler同步屏障](https://github.com/xfhy/Android-Notes)
+3. 利用Choreographer，调用了它的postCallback方法，暂时不知道拿来干嘛的，后面详细介绍
+
+#### Choreographer 初始化
+
+首先我们需要知道mChoreographer是什么，在什么地方进行的初始化。在ViewRootImpl的构造方法里面，我看到了它的初始化。
+
+```java
+public ViewRootImpl(Context context, Display display) {
+    mContext = context;
+    //Binder代理IWindowSession，与WMS通信
+    mWindowSession = WindowManagerGlobal.getWindowSession();
+    mDisplay = display;
+    //初始化当前线程  一般就是主线程，一般是在WindowManagerGlobal.addView()里面调用的
+    mThread = Thread.currentThread();
+    mWidth = -1;
+    mHeight = -1;
+    //Binder代理 IWindow
+    mWindow = new W(this);
+    //当前是不可见的
+    mViewVisibility = View.GONE;
+    mFirst = true; // true for the first time the view is added
+    mAdded = false;
+    ...
+    //初始化Choreographer，从getInstance()方法名，看起来像是单例
+    mChoreographer = Choreographer.getInstance();
+    ...
+}
+```
+
+在ViewRootImpl的构造方法中初始化Choreographer，利用Choreographer的getInstance方法，看起来像是单例。
+
+```java
+//Choreographer.java
+/**
+ * Gets the choreographer for the calling thread.  Must be called from
+ * a thread that already has a {@link android.os.Looper} associated with it.
+ * 获取当前线程中的单例Choreographer，在获取之前必须保证该线程已初始化好Looper
+ * @return The choreographer for this thread.
+ * @throws IllegalStateException if the thread does not have a looper.
+ */
+public static Choreographer getInstance() {
+    return sThreadInstance.get();
+}
+
+// Thread local storage for the choreographer.
+//线程私有
+private static final ThreadLocal<Choreographer> sThreadInstance =
+        new ThreadLocal<Choreographer>() {
+    @Override
+    protected Choreographer initialValue() {
+        //从当前线程的ThreadLocalMap中取出Looper
+        Looper looper = Looper.myLooper();
+        if (looper == null) {
+            throw new IllegalStateException("The current thread must have a looper!");
+        }
+        //初始化
+        Choreographer choreographer = new Choreographer(looper, VSYNC_SOURCE_APP);
+        if (looper == Looper.getMainLooper()) {
+            mMainInstance = choreographer;
+        }
+        return choreographer;
+    }
+};
+
+```
+
+#### Choreographer 流程原理
+
+### 应用
+
+#### 检测FPS
+
+#### Looper
+
+#### 监测卡顿
+
+- Choreographer
+- Looper
+
+### 参考资料
 
 - https://www.youtube.com/watch?v=1iaHxmfZGGc&list=UU_x5XG1OV2P6uZZ5FSM9Ttw&index=1964
 - https://juejin.cn/post/6890407553457963022
