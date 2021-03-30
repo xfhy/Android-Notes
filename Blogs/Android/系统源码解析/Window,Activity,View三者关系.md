@@ -1,17 +1,32 @@
+Window,Activity,View三者关系
+---
+#### 目录
+- [简单概括三者关系](#head1)
+- [三者各自创建时机](#head2)
+	- [Activity的创建](#head3)
+	- [Window的创建](#head4)
+	- [View的创建](#head5)
+- [WindowManager的addView](#head6)
+- [ViewRootImpl的setView](#head7)
+- [触摸事件的接收](#head8)
+- [小结](#head9)
+- [参考](#head10)
+
+---
 
 > ps：文中源码为API 28
 
 经常听到和用到Window，Window到底是什么？
 
-### 简单概括三者关系
+### <span id="head1">简单概括三者关系</span>
 
 View其实是Android中视图的呈现方式，它必须附着在Window这个抽象的概念上，因此有视图的地方就有Window。有视图的地方不仅仅有Activity，还有Dialog、Toast，除此之外还有一些依托Window实现的视图：PopupWindow、菜单，它们也是视图，有视图的地方就有Window。因此Activity、Dialog、Toast都对应着一个Window。
 
-### 三者各自创建时机
+### <span id="head2">三者各自创建时机</span>
 
 这里是以Activity进行举例
 
-#### Activity的创建
+#### <span id="head3">Activity的创建</span>
 
 了解过Activity启动流程的应该知道，创建Activity是通过ActivityThread的performLaunchActivity()中进行的。
 
@@ -32,7 +47,7 @@ activity.attach(appContext, this, getInstrumentation(), r.token,
 
 创建好了Activity之后，紧接着就调用了Activity的attach方法，传过去了很多东西进行初始化。
 
-#### Window的创建
+#### <span id="head4">Window的创建</span>
 
 创建好Activity，马上就调用attach方法，Window就是在这个attach方法中被创建的。
 
@@ -91,7 +106,7 @@ public WindowManagerImpl createLocalWindowManager(Window parentWindow) {
 
 这样一来，Window中就持有了一个WindowManagerImpl的引用。
 
-#### View的创建
+#### <span id="head5">View的创建</span>
 
 Activity所对应的视图其实是在其对应的PhoneWindow中管理着的，它就是鼎鼎大名的DecorView。它是什么时候创建的呢？平时我们使用Activity时，设置一个布局是通过setContentView来完成的，它内部代码如下：
 
@@ -124,7 +139,7 @@ public Window getWindow() {
 
 现在DecorView是创建好了，但是还没有跟Activity建立任何联系，也没有被绘制到界面上进行展示。那到底DecorView是什么时候绘制到屏幕上的呢？
 
-### WindowManager的addView
+### <span id="head6">WindowManager的addView</span>
 
 在Activity的生命周期过程中，我们知道onCreate时界面是不可见的，要等到onResume时Activity的内容才可见。究其原因是因为onCreate中仅是创建了DecorView，并没有将其展示出来。而到onResume中，才真正去将PhoneWindow中的DecorView绘制到屏幕上。onResume是在ActivityThread的handleResumeActivity()方法开始执行的。
 
@@ -198,7 +213,7 @@ public void addView(View view, ViewGroup.LayoutParams params,
 
 WindowManagerImpl自己并没有执行任何操作，转手就把addView的工作交给了单例WindowManagerGlobal进行处理，这是典型的桥接模式。在addView方法中，创建出了一个非常重要的类：ViewRootImpl,它是WindowManager和DecorView之间的桥梁，View的三大流程（测量，布局，绘制）都是通过ViewRootImpl来完成的。
 
-### ViewRootImpl的setView
+### <span id="head7">ViewRootImpl的setView</span>
 
 ViewRootImpl的setView方法最终会将View添加到WindowManagerService中，下面我们来看一下具体细节：
 
@@ -300,7 +315,7 @@ public int addToDisplay(IWindow window, int seq, WindowManager.LayoutParams attr
 
 在System进程中，Session调用了WindowManagerService的addWindow，window被传递给了WindowManagerService，剩下的工作就全交给WindowManagerService来完成了。
 
-### 触摸事件的接收
+### <span id="head8">触摸事件的接收</span>
 
 当触摸事件发生后，Touch事件首先是被传入到Activity，然后被下发到布局中的ViewGroup或View。Touch事件是如何传递到Activity上的？
 
@@ -418,7 +433,7 @@ Touch事件从PhoneWindow中又交给DecorView来进行处理，DecorView本身�
 
 触摸事件到达ViewRootImpl中后，传递给PhoneWindow中的DecorView，再传递给Activity，Activity又将其传递给PhoneWindow，PhoneWindow最终交给顶级View--DecorView，由DecorView进行事件分发。
 
-### 小结
+### <span id="head9">小结</span>
 
 从表面上看Activity参与度比较低，大部分View的添加操作都被封装到Window中进行实现，而Activity相当于是提供给开发人员的一个管理类，通过它能更简单地实现Window和View的操作逻辑。
 
@@ -429,7 +444,7 @@ Touch事件从PhoneWindow中又交给DecorView来进行处理，DecorView本身�
 - ViewRootImpl的setView方法中主要完成两件事情：View渲染以及接收触摸事件
 - Dialog和Toast都有自己的Window，而PopupWindow没有
 
-### 参考
+### <span id="head10">参考</span>
 
 - https://mp.weixin.qq.com/s/oFVBrIAUwD0wnlSfm-95bQ
 - https://mp.weixin.qq.com/s/-5lyASIaSFV6wG3wfMS9Yg
