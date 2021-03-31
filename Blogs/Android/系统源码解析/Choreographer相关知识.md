@@ -117,6 +117,18 @@ void scheduleTraversals() {
         ...
     }
 }
+
+void doTraversal() {
+    if (mTraversalScheduled) {
+        //标记已经完成
+        mTraversalScheduled = false;
+        //移除同步屏障
+        mHandler.getLooper().getQueue().removeSyncBarrier(mTraversalBarrier);
+        //开始三大流程 measure layout draw
+        performTraversals();
+        ...
+    }
+}
 ```
 
 1. 在一次VSYNC信号期间多次调用scheduleTraversals是没有意义的，所以用了个标志位标记一下
@@ -187,7 +199,145 @@ private static final ThreadLocal<Choreographer> sThreadInstance =
 
 ```
 
+从上面的代码可以看出，其实getInstance()的实现并不是真正意义上的单例，而是线程内的单例。其实现原理是利用ThreadLocal来实现数据线程私有化，不了解的同学可以看一下[Handler机制你需要知道的一切](https://github.com/xfhy/Android-Notes)。
+
+在ThreadLocal的initialValue()中，先是取出已经在当前线程初始化好的私有数据Looper，如果当前线程没有初始化Looper，那么对不起了，先抛个IllegalStateException表示一下。
+
+这里的初始化一般是在主线程中，主线程中的Looper早就初始化好了，所以这里不会抛异常。by the way,主线程Looper是在什么时候初始化好的？先看一下应用进程的创建流程：
+
+1. AMS通过调用Process.start()来创建应用进程
+2. 在Process.start()里面通过ZygoteProcess的zygoteSendArgsAndGetResult与Zygote进程（Zygote是谁？它是进程孵化大师,创建之初就使用zygoteServer.registerServerSocketFromEnv创建zygote通信的服务端；然后还通过调用forkSystemServer启动`system_server`;然后是zygoteServer.runSelectLoop进入循环模式）建立Socket连接，并将创建进程所需要的参数发送给Zygote的Socket服务端
+3. Zygote进程的Socket服务端（ZygoteServer）收到参数后调用ZygoteConnection.processOneCommand() 处理参数，并 fork 进程
+4. 然后通过RuntimeInit的findStaticMain()找到ActivityThread类的main方法并执行
+
+想必分析到这里，大家已经很熟悉了吧
+
+```java
+//ActivityThread.java
+public static void main(String[] args) {
+    ...
+    //初始化主线程的Looper
+    Looper.prepareMainLooper();
+    
+    //创建好ActivityThread 并调用attach
+    ActivityThread thread = new ActivityThread();
+    thread.attach(false, startSeq);
+
+    if (sMainThreadHandler == null) {
+        sMainThreadHandler = thread.getHandler();
+    }
+    
+    //主线程处于loop循环中
+    Looper.loop();
+    
+    //主线程的loop循环是不能退出的
+    throw new RuntimeException("Main thread loop unexpectedly exited");
+}
+```
+
+应用进程一启动，主线程的Looper就首当其冲的初始化好了，说明它在Android中的地位重要性非常大。它的初始化，就是将Looper存于ThreadLocal中，然后再将该ThreadLocal存于当前线程的ThreadLocalMap中，以达到线程私有化的目的。
+
+回到Choreographer的构造方法
+
+```java
+//Choreographer.java
+private Choreographer(Looper looper, int vsyncSource) {
+    //把Looper传进来放起
+    mLooper = looper;
+    //FrameHandler初始化  传入Looper
+    mHandler = new FrameHandler(looper);
+    // USE_VSYNC 在 Android 4.1 之后默认为 true，
+    // FrameDisplayEventReceiver是用来接收VSYNC信号的
+    mDisplayEventReceiver = USE_VSYNC
+            ? new FrameDisplayEventReceiver(looper, vsyncSource)
+            : null;
+    mLastFrameTimeNanos = Long.MIN_VALUE;
+    
+    //一帧的时间，60FPS就是16.66ms
+    mFrameIntervalNanos = (long)(1000000000 / getRefreshRate());
+    
+    // 回调队列
+    mCallbackQueues = new CallbackQueue[CALLBACK_LAST + 1];
+    for (int i = 0; i <= CALLBACK_LAST; i++) {
+        mCallbackQueues[i] = new CallbackQueue();
+    }
+    // b/68769804: For low FPS experiments.
+    setFPSDivisor(SystemProperties.getInt(ThreadedRenderer.DEBUG_FPS_DIVISOR, 1));
+}
+```
+
+构造Choreographer基本上是完了，构造方法里面有些新东西，后面详细说。
+
 #### Choreographer 流程原理
+
+现在我们来说一下Choreographer的postCallback()，也就是ViewRootImpl使用的地方
+
+```java
+//Choreographer.java
+//ViewRootImpl是使用的这个
+public void postCallback(int callbackType, Runnable action, Object token) {
+    postCallbackDelayed(callbackType, action, token, 0);
+}
+public void postCallbackDelayed(int callbackType,
+        Runnable action, Object token, long delayMillis) {
+    ...
+    postCallbackDelayedInternal(callbackType, action, token, delayMillis);
+}
+private final CallbackQueue[] mCallbackQueues;
+private void postCallbackDelayedInternal(int callbackType,
+        Object action, Object token, long delayMillis) {
+    synchronized (mLock) {
+        final long now = SystemClock.uptimeMillis();
+        final long dueTime = now + delayMillis;
+        //将mTraversalRunnable存入mCallbackQueues数组callbackType处的队列中
+        mCallbackQueues[callbackType].addCallbackLocked(dueTime, action, token);
+        
+        //传入的delayMillis是0，这里dueTime是等于now的
+        if (dueTime <= now) {
+            scheduleFrameLocked(now);
+        } else {
+            Message msg = mHandler.obtainMessage(MSG_DO_SCHEDULE_CALLBACK, action);
+            msg.arg1 = callbackType;
+            msg.setAsynchronous(true);
+            mHandler.sendMessageAtTime(msg, dueTime);
+        }
+    }
+}
+```
+
+有2个关键地方，第一个是将mTraversalRunnable存起来方便待会儿调用，第二个是执行scheduleFrameLocked方法
+
+```java
+private void scheduleFrameLocked(long now) {
+    if (!mFrameScheduled) {
+        mFrameScheduled = true;
+        if (USE_VSYNC) {
+            //走这里
+
+            // 如果当前线程是初始化Choreographer时的线程，直接申请VSYNC，否则立刻发送一个异步消息到初始化Choreographer时的线程中申请VSYNC
+            if (isRunningOnLooperThreadLocked()) {
+                scheduleVsyncLocked();
+            } else {
+                Message msg = mHandler.obtainMessage(MSG_DO_SCHEDULE_VSYNC);
+                msg.setAsynchronous(true);
+                mHandler.sendMessageAtFrontOfQueue(msg);
+            }
+        } else {
+            //这里是未开启VSYNC的情况，Android 4.1之后默认开启
+            final long nextFrameTime = Math.max(
+                    mLastFrameTimeNanos / TimeUtils.NANOS_PER_MS + sFrameDelay, now);
+            if (DEBUG_FRAMES) {
+                Log.d(TAG, "Scheduling next frame in " + (nextFrameTime - now) + " ms.");
+            }
+            Message msg = mHandler.obtainMessage(MSG_DO_FRAME);
+            msg.setAsynchronous(true);
+            mHandler.sendMessageAtTime(msg, nextFrameTime);
+        }
+    }
+}
+```
+
+
 
 ### 应用
 
