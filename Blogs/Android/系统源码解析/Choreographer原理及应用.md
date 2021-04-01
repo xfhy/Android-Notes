@@ -543,13 +543,20 @@ final class TraversalRunnable implements Runnable {
 
 也是，我们整个流程也就完成了，从doTraversal()开始就是View的三大流程（measure、layout、draw）了。Choreographer的使命也基本完成了。
 
-上面就是Choreographer的工作流程。
+上面就是Choreographer的工作流程。简单总结一下：
+
+1. 从ActivityThread.handleResumeActivity开始，`ActivityThread.handleResumeActivity()->WindowManagerImpl.addView()->WindowManagerGlobal.addView()->初始化ViewRootImpl->初始化Choreographer->ViewRootImpl.setView()`
+2. 在ViewRootImpl的setView中会调用`requestLayout()->scheduleTraversals()`,然后是建立同步屏障
+3. 通过Choreographer线程单例的postCallback()提交一个任务mTraversalRunnable，这个任务是用来做View的三大流程的（measure、layout、draw）
+4. Choreographer.postCallback()内部通过DisplayEventReceiver.nativeScheduleVsync()向系统底层注册VSYNC信号监听，当VSYNC信号来临时，会回调DisplayEventReceiver的dispatchVsync()，最终会通知FrameDisplayEventReceiver.onVsync()方法。
+5. 在onVsync()中取出之前传入的任务mTraversalRunnable，执行run方法，开始绘制流程。
 
 ### 应用
 
 在了解了Choreographer的工作原理之后，我们来点实际的，将Choreographer这块的知识利用起来。它可以帮助我们检测应用的fps。
 
 #### 检测FPS
+
 
 
 #### 监测卡顿
