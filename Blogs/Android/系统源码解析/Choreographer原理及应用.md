@@ -308,6 +308,7 @@ private void postCallbackDelayedInternal(int callbackType,
 有2个关键地方，第一个是将mTraversalRunnable存起来方便待会儿调用，第二个是执行scheduleFrameLocked方法
 
 ```java
+//Choreographer.java
 private void scheduleFrameLocked(long now) {
     if (!mFrameScheduled) {
         mFrameScheduled = true;
@@ -337,18 +338,221 @@ private void scheduleFrameLocked(long now) {
 }
 ```
 
+通过调用scheduleVsyncLocked()来监听VSYNC信号，这个信号是由硬件发出来的，信号来了的时候才开始绘制工作。
 
+```java
+//Choreographer.java
+private final FrameDisplayEventReceiver mDisplayEventReceiver;
+
+private void scheduleVsyncLocked() {
+    mDisplayEventReceiver.scheduleVsync();
+}
+
+private final class FrameDisplayEventReceiver extends DisplayEventReceiver implements Runnable {
+    ...
+}
+
+//DisplayEventReceiver.java
+public void scheduleVsync() {
+    if (mReceiverPtr == 0) {
+        Log.w(TAG, "Attempted to schedule a vertical sync pulse but the display event "
+                + "receiver has already been disposed.");
+    } else {
+        //注册监听VSYNC信号，会回调dispatchVsync()方法
+        nativeScheduleVsync(mReceiverPtr);
+    }
+}
+
+```
+
+mDisplayEventReceiver是一个FrameDisplayEventReceiver，FrameDisplayEventReceiver继承自DisplayEventReceiver。在DisplayEventReceiver里面有一个方法scheduleVsync()，这个方法是用来注册监听VSYNC信号的，它是一个native方法，水平有限，暂不继续深入了。
+
+当有VSYNC信号来临时，native层会回调DisplayEventReceiver的dispatchVsync方法
+
+```java
+//DisplayEventReceiver.java
+// Called from native code.
+@SuppressWarnings("unused")
+private void dispatchVsync(long timestampNanos, int builtInDisplayId, int frame) {
+    onVsync(timestampNanos, builtInDisplayId, frame);
+}
+public void onVsync(long timestampNanos, int builtInDisplayId, int frame) {
+}
+```
+
+当收到VSYNC信号时，回调dispatchVsync方法，走到了onVsync方法，这个方法被子类FrameDisplayEventReceiver覆写了的
+
+```java
+//FrameDisplayEventReceiver.java  
+//它是Choreographer的内部类
+private final class FrameDisplayEventReceiver extends DisplayEventReceiver
+        implements Runnable {
+    @Override
+    public void onVsync(long timestampNanos, int builtInDisplayId, int frame) {
+        if (builtInDisplayId != SurfaceControl.BUILT_IN_DISPLAY_ID_MAIN) {
+            Log.d(TAG, "Received vsync from secondary display, but we don't support "
+                    + "this case yet.  Choreographer needs a way to explicitly request "
+                    + "vsync for a specific display to ensure it doesn't lose track "
+                    + "of its scheduled vsync.");
+            scheduleVsync();
+            return;
+        }
+        
+        //timestampNanos是VSYNC回调的时间戳  以纳秒为单位
+        long now = System.nanoTime();
+        if (timestampNanos > now) {
+            timestampNanos = now;
+        }
+
+        if (mHavePendingVsync) {
+            Log.w(TAG, "Already have a pending vsync event.  There should only be "
+                    + "one at a time.");
+        } else {
+            mHavePendingVsync = true;
+        }
+
+        mTimestampNanos = timestampNanos;
+        mFrame = frame;
+        //自己是一个Runnable，把自己传了进去
+        Message msg = Message.obtain(mHandler, this);
+        //异步消息，保证优先级
+        msg.setAsynchronous(true);
+        mHandler.sendMessageAtTime(msg, timestampNanos / TimeUtils.NANOS_PER_MS);
+    }
+    
+    @Override
+    public void run() {
+        ...
+        doFrame(mTimestampNanos, mFrame);
+    }
+}
+```
+
+在onVsync()方法中，其实主要内容就是发个消息（应该是为了切换线程），然后执行run方法。而在run方法中，调用了Choreographer的doFrame方法。这个方法有点长，我们来理一下。
+
+```java
+//Choreographer.java
+
+//frameTimeNanos是VSYNC信号回调时的时间
+void doFrame(long frameTimeNanos, int frame) {
+    final long startNanos;
+    synchronized (mLock) {
+        if (!mFrameScheduled) {
+            return; // no work to do
+        }
+        ...
+        long intendedFrameTimeNanos = frameTimeNanos;
+        startNanos = System.nanoTime();
+        //jitterNanos为当前时间与VSYNC信号来时的时间的差值，如果Looper有很多异步消息等待处理（或者是前一个异步消息处理特别耗时，当前消息发送了很久才得以执行），那么处理当来到这里时可能会出现很大的时间间隔
+        final long jitterNanos = startNanos - frameTimeNanos;
+        
+        //mFrameIntervalNanos是帧间时长，一般手机上为16.67ms
+        if (jitterNanos >= mFrameIntervalNanos) {
+            final long skippedFrames = jitterNanos / mFrameIntervalNanos;
+            //想必这个日志大家都见过吧，主线程做了太多的耗时操作或者绘制起来特别慢就会有这个
+            //这里的逻辑是当掉帧个数超过30，则输出相应日志
+            if (skippedFrames >= SKIPPED_FRAME_WARNING_LIMIT) {
+                Log.i(TAG, "Skipped " + skippedFrames + " frames!  "
+                        + "The application may be doing too much work on its main thread.");
+            }
+            final long lastFrameOffset = jitterNanos % mFrameIntervalNanos;
+            frameTimeNanos = startNanos - lastFrameOffset;
+        }
+        ...
+    }
+
+    try {
+        AnimationUtils.lockAnimationClock(frameTimeNanos / TimeUtils.NANOS_PER_MS);
+
+        mFrameInfo.markInputHandlingStart();
+        doCallbacks(Choreographer.CALLBACK_INPUT, frameTimeNanos);
+
+        mFrameInfo.markAnimationsStart();
+        doCallbacks(Choreographer.CALLBACK_ANIMATION, frameTimeNanos);
+        
+        //执行回调
+        mFrameInfo.markPerformTraversalsStart();
+        doCallbacks(Choreographer.CALLBACK_TRAVERSAL, frameTimeNanos);
+
+        doCallbacks(Choreographer.CALLBACK_COMMIT, frameTimeNanos);
+    } finally {
+        AnimationUtils.unlockAnimationClock();
+    }
+}
+```
+
+doFrame大体做了2件事，一个是可能会给开发者打个日志提醒下卡顿，另一个是执行回调。
+
+当VSYNC信号来临时，记录了此时的时间点，也就是这里的frameTimeNanos。而执行doFrame()时，是通过Looper的消息循环来的，这意味着前面有消息没执行完，那么当前这个消息的执行就会被阻塞在那里。时间太长了，而这个是处理界面绘制的，如果时间长了没有即时进行绘制，就会出现掉帧。源码中也打了log，在掉帧30的时候。
+
+下面来看一下执行回调的过程
+
+```java
+//Choreographer.java
+void doCallbacks(int callbackType, long frameTimeNanos) {
+    CallbackRecord callbacks;
+    synchronized (mLock) {
+        final long now = System.nanoTime();
+        //根据callbackType取出相应的CallbackRecord
+        callbacks = mCallbackQueues[callbackType].extractDueCallbacksLocked(
+                now / TimeUtils.NANOS_PER_MS);
+        if (callbacks == null) {
+            return;
+        }
+        mCallbacksRunning = true;
+        ...
+    }
+    try {
+        Trace.traceBegin(Trace.TRACE_TAG_VIEW, CALLBACK_TRACE_TITLES[callbackType]);
+        for (CallbackRecord c = callbacks; c != null; c = c.next) {
+            //
+            c.run(frameTimeNanos);
+        }
+    } finally {
+        ...
+    }
+}
+private static final class CallbackRecord {
+    public CallbackRecord next;
+    public long dueTime;
+    public Object action; // Runnable or FrameCallback
+    public Object token;
+
+    public void run(long frameTimeNanos) {
+        if (token == FRAME_CALLBACK_TOKEN) {
+            ((FrameCallback)action).doFrame(frameTimeNanos);
+        } else {
+            //会走到这里来，因为ViewRootImpl的scheduleTraversals时，postCallback传过来的token是null。
+            ((Runnable)action).run();
+        }
+    }
+}
+```
+
+从mCallbackQueues数组中找到callbackType对应的CallbackRecord，然后执行队列里面的所有元素（CallbackRecord）的run方法。然后也就是执行到了ViewRootImpl的scheduleTraversals时，postCallback传过来的mTraversalRunnable（是一个Runnable）。回顾一下:
+
+```java
+//ViewRootImpl.java
+final class TraversalRunnable implements Runnable {
+    @Override
+    public void run() {
+        doTraversal();
+    }
+}
+```
+
+也是，我们整个流程也就完成了，从doTraversal()开始就是View的三大流程（measure、layout、draw）了。Choreographer的使命也基本完成了。
+
+上面就是Choreographer的工作流程。
 
 ### 应用
 
+在了解了Choreographer的工作原理之后，我们来点实际的，将Choreographer这块的知识利用起来。它可以帮助我们检测应用的fps。
+
 #### 检测FPS
 
-#### Looper
 
 #### 监测卡顿
-
-- Choreographer
-- Looper
 
 ### 参考资料
 
