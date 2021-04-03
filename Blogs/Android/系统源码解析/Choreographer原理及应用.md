@@ -1,6 +1,8 @@
 
 Choreographer对于一些同学来说可能比较陌生，但是，它其实出场率是极高的。View的三大流程就是靠着Choreographer来实现的，翻译过来这个单词的意思是“编舞者”。下面我们来详细介绍，它的具体作用是什么。
 
+> [demo地址](https://github.com/xfhy/AllInOne)
+
 ### 1. 前置知识
 
 在讲Choreographer之前，必须得提一些前置知识来辅助学习。
@@ -557,12 +559,228 @@ final class TraversalRunnable implements Runnable {
 
 #### 检测FPS
 
+有了上面的分析，我们知道Choreographer内部去监听了VSYNC信号，并且当VSYNC信号来临时会发个异步消息给Looper，在执行到这个消息时会通知外部观察者（上面的观察者就是ViewRootImpl），通知ViewRootImpl可以开始绘制了。Choreographer的每次回调都是在通知ViewRootImpl绘制，我们只需要统计出1秒内这个回调次数有多少次，即可知道是多少fps。
 
+反正Choreographer是线程单例，我在主线程调用获取它的实例，然后模仿ViewRootImpl调用postCallback注册一个观察者。于是我将该思路写成代码，然后发现，postCallback是居然是hide方法。/无语
+
+但是，有个意外收获，Choreographer提供了另外一个postFrameCallback方法。我看了下源码，与postCallback差异不大，只不过注册的观察者类型是`CALLBACK_ANIMATION`，但这不影响它回调
+
+```java
+//Choreographer.java
+public void postFrameCallback(FrameCallback callback) {
+    postFrameCallbackDelayed(callback, 0);
+}
+public void postFrameCallbackDelayed(FrameCallback callback, long delayMillis) {
+    postCallbackDelayedInternal(CALLBACK_ANIMATION,
+            callback, FRAME_CALLBACK_TOKEN, delayMillis);
+}
+```
+
+直接上代码吧，show me the code
+
+```java
+object FpsMonitor {
+
+    private const val FPS_INTERVAL_TIME = 1000L
+
+    /**
+     * 1秒内执行回调的次数  即fps
+     */
+    private var count = 0
+    private val mMonitorListeners = mutableListOf<(Int) -> Unit>()
+
+    @Volatile
+    private var isStartMonitor = false
+    private val monitorFrameCallback by lazy { MonitorFrameCallback() }
+    private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
+
+    fun startMonitor(listener: (Int) -> Unit) {
+        mMonitorListeners.add(listener)
+        if (isStartMonitor) {
+            return
+        }
+        isStartMonitor = true
+        Choreographer.getInstance().postFrameCallback(monitorFrameCallback)
+        //1秒后结算 count次数
+        mainHandler.postDelayed(monitorFrameCallback, FPS_INTERVAL_TIME)
+    }
+
+    fun stopMonitor() {
+        isStartMonitor = false
+        count = 0
+        Choreographer.getInstance().removeFrameCallback(monitorFrameCallback)
+        mainHandler.removeCallbacks(monitorFrameCallback)
+    }
+
+    class MonitorFrameCallback : Choreographer.FrameCallback, Runnable {
+
+        //VSYNC信号到了，且处理到当前异步消息了，才会回调这里
+        override fun doFrame(frameTimeNanos: Long) {
+            //次数+1  1秒内
+            count++
+            //继续下一次 监听VSYNC信号
+            Choreographer.getInstance().postFrameCallback(this)
+        }
+
+        override fun run() {
+            //将count次数传递给外面
+            mMonitorListeners.forEach {
+                it.invoke(count)
+            }
+            count = 0
+            //继续发延迟消息  等到1秒后统计count次数
+            mainHandler.postDelayed(this, FPS_INTERVAL_TIME)
+        }
+    }
+
+}
+```
+
+通过记录每秒内Choreographer回调的次数，即可得到FPS。
 
 #### 监测卡顿
+
+Choreographer除了可以用来监测FPS以外还可以拿来进行卡顿检测。
+
+##### Choreographer 帧率检测
+
+##### Looper字符串匹配 卡顿检测
+
+这里介绍另一种方式来进行卡顿检测（这里指主线程，子线程一般不关心卡顿问题）--Looper。先来看一段loop代码：
+
+```java
+//Looper.java
+private Printer mLogging;
+public void setMessageLogging(@Nullable Printer printer) {
+    mLogging = printer;
+}
+
+public static void loop() {
+    final Looper me = myLooper();
+    for (;;) {
+        final Printer logging = me.mLogging;
+        if (logging != null) {
+            logging.println(">>>>> Dispatching to " + msg.target + " " +
+                    msg.callback + ": " + msg.what);
+        }
+        ...
+        msg.target.dispatchMessage(msg);
+        ...
+        if (logging != null) {
+            logging.println("<<<<< Finished to " + msg.target + " " + msg.callback);
+        }
+    }
+}
+```
+
+从这段代码可以看出，如果我们设置了Printer，那么在每个消息分发的前后都会打印一句日志来标识事件分发的开始和结束。这个点可以利用一下，我们可以通过Looper打印日志的时间间隔来判断是否发生卡顿，如果发生卡顿，则将此时线程的堆栈信息给保存下来，进而分析哪里卡顿了。这种匹配字符串方案能够准确地在发生卡顿时拿到堆栈信息。
+
+原理搞清楚了，咱直接撸一个工具出来
+
+```java
+const val TAG = "looper_monitor"
+
+/**
+ * 默认卡顿阈值
+ */
+const val DEFAULT_BLOCK_THRESHOLD_MILLIS = 3000L
+const val BEGIN_TAG = ">>>>> Dispatching"
+const val END_TAG = "<<<<< Finished"
+
+class LooperPrinter : Printer {
+
+    private var mBeginTime = 0L
+
+    @Volatile
+    var mHasEnd = false
+    private val collectRunnable by lazy { CollectRunnable() }
+    private val handlerThreadWrapper by lazy { HandlerThreadWrapper() }
+
+    override fun println(msg: String?) {
+        if (msg.isNullOrEmpty()) {
+            return
+        }
+        log(TAG, "$msg")
+        if (msg.startsWith(BEGIN_TAG)) {
+            mBeginTime = System.currentTimeMillis()
+            mHasEnd = false
+
+            //需要单独搞个线程来获取堆栈
+            handlerThreadWrapper.handler.postDelayed(
+                collectRunnable,
+                DEFAULT_BLOCK_THRESHOLD_MILLIS
+            )
+        } else {
+            mHasEnd = true
+            if (System.currentTimeMillis() - mBeginTime < DEFAULT_BLOCK_THRESHOLD_MILLIS) {
+                handlerThreadWrapper.handler.removeCallbacks(collectRunnable)
+            }
+        }
+    }
+
+    fun getMainThreadStackTrace(): String {
+        val stackTrace = Looper.getMainLooper().thread.stackTrace
+        return StringBuilder().apply {
+            for (stackTraceElement in stackTrace) {
+                append(stackTraceElement.toString())
+                append("\n")
+            }
+        }.toString()
+    }
+
+    inner class CollectRunnable : Runnable {
+        override fun run() {
+            if (!mHasEnd) {
+                //主线程堆栈给拿出来，打印一下
+                log(TAG, getMainThreadStackTrace())
+            }
+        }
+    }
+
+    class HandlerThreadWrapper {
+        var handler: Handler
+        init {
+            val handlerThread = HandlerThread("LooperHandlerThread")
+            handlerThread.start()
+            handler = Handler(handlerThread.looper)
+        }
+    }
+
+}
+```
+
+代码比较少，主要思路就是在println()回调时判断回调的文本信息是开始还是结束。如果是开始则搞个定时器，3秒后就认为是卡顿，就开始取主线程堆栈信息输出日志，如果在这3秒内消息已经分发完成，那么就不是卡顿，就把这个定时器取消掉。
+
+我在demo中搞了个点击事件，sleep了4秒
+
+```java
+17987-17987/com.xfhy.allinone D/looper_monitor: >>>>> Dispatching to Handler (android.view.ViewRootImpl$ViewRootHandler) {63ca49} android.view.View$PerformClick@13f525a: 0
+17987-18042/com.xfhy.allinone D/looper_monitor: java.lang.Thread.sleep(Native Method)
+    java.lang.Thread.sleep(Thread.java:373)
+    java.lang.Thread.sleep(Thread.java:314)
+    com.xfhy.allinone.performance.caton.CatonDetectionActivity.manufacturingCaton(CatonDetectionActivity.kt:39)
+    com.xfhy.allinone.performance.caton.CatonDetectionActivity.access$manufacturingCaton(CatonDetectionActivity.kt:14)
+    com.xfhy.allinone.performance.caton.CatonDetectionActivity$onCreate$3.onClick(CatonDetectionActivity.kt:34)
+    android.view.View.performClick(View.java:6597)
+    android.view.View.performClickInternal(View.java:6574)
+    android.view.View.access$3100(View.java:778)
+    android.view.View$PerformClick.run(View.java:25885)
+    android.os.Handler.handleCallback(Handler.java:873)
+    android.os.Handler.dispatchMessage(Handler.java:99)
+    android.os.Looper.loop(Looper.java:193)
+    android.app.ActivityThread.main(ActivityThread.java:6669)
+    java.lang.reflect.Method.invoke(Native Method)
+    com.android.internal.os.RuntimeInit$MethodAndArgsCaller.run(RuntimeInit.java:493)
+    com.android.internal.os.ZygoteInit.main(ZygoteInit.java:858)
+17987-17987/com.xfhy.allinone D/looper_monitor: <<<<< Finished to Handler (android.view.ViewRootImpl$ViewRootHandler) {63ca49} android.view.View$PerformClick@13f525a
+```
+
+可以看到，我们已经获取到了卡顿时的堆栈信息，从这些信息已经足以分析出在哪里发生了什么事情。这里是在CatonDetectionActivity的manufacturingCaton处sleep()了。
 
 ### 参考资料
 
 - https://www.youtube.com/watch?v=1iaHxmfZGGc&list=UU_x5XG1OV2P6uZZ5FSM9Ttw&index=1964
 - https://juejin.cn/post/6890407553457963022
 - http://gityuan.com/2017/02/25/choreographer/
+- https://github.com/markzhai/AndroidPerformanceMonitor
+- https://zhuanlan.zhihu.com/p/108022695
