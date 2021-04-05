@@ -1,21 +1,40 @@
+Choreographer原理及应用
+---
+#### 目录
+- [1. 前置知识](#head1)
+	- [刷新率](#head2)
+	- [帧速率](#head3)
+	- [VSYNC](#head4)
+	- [FPS](#head5)
+- [2. ViewRootImpl.setView()](#head6)
+- [3. Choreographer 编舞者](#head7)
+	- [Choreographer 初始化](#head8)
+	- [Choreographer 流程原理](#head9)
+- [4. 应用](#head10)
+	- [检测FPS](#head11)
+	- [监测卡顿](#head12)
+		- [Choreographer 流畅度监测](#head13)
+		- [Looper字符串匹配 卡顿检测](#head14)
+
+---
 
 Choreographer对于一些同学来说可能比较陌生，但是，它其实出场率是极高的。View的三大流程就是靠着Choreographer来实现的，翻译过来这个单词的意思是“编舞者”。下面我们来详细介绍，它的具体作用是什么。
 
 > [demo地址](https://github.com/xfhy/AllInOne)
 
-### 1. 前置知识
+### <span id="head1">1. 前置知识</span>
 
 在讲Choreographer之前，必须得提一些前置知识来辅助学习。
 
-#### 刷新率
+#### <span id="head2">刷新率</span>
 
 刷新率代表屏幕在一秒内刷新屏幕的次数，这个值用赫兹来表示，取决于硬件的固定参数。这个值一般是60Hz，即每16.66ms刷新一次屏幕。
 
-#### 帧速率
+#### <span id="head3">帧速率</span>
 
 帧速率代表了GPU在一秒内绘制操作的帧数，比如30FPS/60FPS。在这种情况下，高点的帧速率总是好的。
 
-#### VSYNC
+#### <span id="head4">VSYNC</span>
 
 刷新率和帧速率需要协同工作，才能让应用程序的内容显示到屏幕上，GPU会获取图像数据进行绘制，然后硬件负责把内容呈现到屏幕上，这将在应用程序的生命周期中周而复始地发生。
 
@@ -45,11 +64,11 @@ Choreographer对于一些同学来说可能比较陌生，但是，它其实出�
 
 **VSYNC是为了解决屏幕刷新率和GPU帧率不一致导致的“屏幕撕裂”问题**。
 
-#### FPS
+#### <span id="head5">FPS</span>
 
 FPS：Frame Per Second，即每秒显示的帧数，也叫帧率。Android设备的FPS一般是60FPS，即每秒刷新60次，也就是60帧，每一帧的时间最多只有`1000/60=16.67ms`。一旦某一帧的绘制时间超过了限制，就会发生掉帧，用户在连续两帧会看到同样的画面。也就是上面说的屏幕刷新率比帧速率快的情况。
 
-### 2. ViewRootImpl.setView()
+### <span id="head6">2. ViewRootImpl.setView()</span>
 
 之前写过一篇文章[Window,Activity,View三者关系](https://github.com/xfhy/Android-Notes)，里面提到了ViewRootImpl.setView()是在什么时候被调用的：`ActivityThread.handleResumeActivity()->WindowManagerImpl.addView()->WindowManagerGlobal.addView()->ViewRootImpl.setView()`
 
@@ -93,7 +112,7 @@ public void requestLayout() {
 
 requestLayout()会走到scheduleTraversals()方法，这个方法非常重要，下面单独展开来讲。
 
-### 3. Choreographer 编舞者
+### <span id="head7">3. Choreographer 编舞者</span>
 
 > 终于要到Choreographer上场了
 
@@ -137,7 +156,7 @@ void doTraversal() {
 2. 发送了一个屏障消息，让同步的消息不能执行，只能执行异步消息，而绘制的消息是异步的，保证了绘制的消息的优先级。绘制任务肯定高于其他的同步任务的。关于Handler同步屏障的具体详情可以阅读一下我之前写的一篇文章[Handler同步屏障](https://github.com/xfhy/Android-Notes)
 3. 利用Choreographer，调用了它的postCallback方法，暂时不知道拿来干嘛的，后面详细介绍
 
-#### Choreographer 初始化
+#### <span id="head8">Choreographer 初始化</span>
 
 首先我们需要知道mChoreographer是什么，在什么地方进行的初始化。在ViewRootImpl的构造方法里面，我看到了它的初始化。
 
@@ -270,7 +289,7 @@ private Choreographer(Looper looper, int vsyncSource) {
 
 构造Choreographer基本上是完了，构造方法里面有些新东西，后面详细说。
 
-#### Choreographer 流程原理
+#### <span id="head9">Choreographer 流程原理</span>
 
 现在我们来说一下Choreographer的postCallback()，也就是ViewRootImpl使用的地方
 
@@ -553,11 +572,11 @@ final class TraversalRunnable implements Runnable {
 4. Choreographer.postCallback()内部通过DisplayEventReceiver.nativeScheduleVsync()向系统底层注册VSYNC信号监听，当VSYNC信号来临时，会回调DisplayEventReceiver的dispatchVsync()，最终会通知FrameDisplayEventReceiver.onVsync()方法。
 5. 在onVsync()中取出之前传入的任务mTraversalRunnable，执行run方法，开始绘制流程。
 
-### 应用
+### <span id="head10">4. 应用</span>
 
 在了解了Choreographer的工作原理之后，我们来点实际的，将Choreographer这块的知识利用起来。它可以帮助我们检测应用的fps。
 
-#### 检测FPS
+#### <span id="head11">检测FPS</span>
 
 有了上面的分析，我们知道Choreographer内部去监听了VSYNC信号，并且当VSYNC信号来临时会发个异步消息给Looper，在执行到这个消息时会通知外部观察者（上面的观察者就是ViewRootImpl），通知ViewRootImpl可以开始绘制了。Choreographer的每次回调都是在通知ViewRootImpl绘制，我们只需要统计出1秒内这个回调次数有多少次，即可知道是多少fps。
 
@@ -638,13 +657,76 @@ object FpsMonitor {
 
 通过记录每秒内Choreographer回调的次数，即可得到FPS。
 
-#### 监测卡顿
+#### <span id="head12">监测卡顿</span>
 
 Choreographer除了可以用来监测FPS以外还可以拿来进行卡顿检测。
 
-##### Choreographer 帧率检测
+##### <span id="head13">Choreographer 流畅度监测</span>
 
-##### Looper字符串匹配 卡顿检测
+通过设置Choreographer的FrameCallback，可以在每一帧被渲染的时候记录下它开始渲染的时间，这样在下一帧被处理时，我们可以根据时间差来判断上一帧在渲染过程中是否出现掉帧。Android中，每发出一个VSYNC信号都会通知界面进行重绘、渲染，每一次同步周期为16.6ms，代表一帧的刷新频率。每次需要开始渲染的时候都会回调doFrame()，如果某2次doFrame()之间的时间差大于16.6ms，则说明发生了UI有点卡顿，已经在掉帧了，拿着这个时间差除以16.6就得出了掉过了多少帧。
+
+原理大概就是这样，show me the code:
+
+```java
+object ChoreographerMonitor {
+    @Volatile
+    private var isStart = false
+    private val monitorFrameCallback by lazy { MonitorFrameCallback() }
+    private var mListener: (Int) -> Unit = {}
+    private var mLastTime = 0L
+
+    fun startMonitor(listener: (Int) -> Unit) {
+        if (isStart) {
+            return
+        }
+        mListener = listener
+        Choreographer.getInstance().postFrameCallback(monitorFrameCallback)
+        isStart = true
+    }
+
+    fun stopMonitor() {
+        isStart = false
+        Choreographer.getInstance().removeFrameCallback { monitorFrameCallback }
+    }
+
+    class MonitorFrameCallback : Choreographer.FrameCallback {
+
+        private val refreshRate by lazy {
+            //计算刷新率 赋值给refreshRate
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                App.getAppContext().display?.refreshRate ?: 16.6f
+            } else {
+                val windowManager =
+                    App.getAppContext().getSystemService(Context.WINDOW_SERVICE) as WindowManager
+                windowManager.defaultDisplay.refreshRate
+            }
+        }
+
+        override fun doFrame(frameTimeNanos: Long) {
+            mLastTime = if (mLastTime == 0L) {
+                frameTimeNanos
+            } else {
+                //frameTimeNanos的单位是纳秒,这里需要计算时间差,然后转成毫秒
+                val time = (frameTimeNanos - mLastTime) / 1000000
+                //跳过了多少帧
+                val frames = (time / (1000f / refreshRate)).toInt()
+                if (frames > 1) {
+                    mListener.invoke(frames)
+                }
+                frameTimeNanos
+            }
+            Choreographer.getInstance().postFrameCallback(this)
+        }
+
+    }
+}
+```
+
+因为postFrameCallback()方法只能监听一次VSYNC信号，所以doFrame()都得再次调用，继续监听下一次VSYNC信号。
+
+这种方案适合监控线上环境的app掉帧情况来计算app在某些场景的流畅度，然后有针对地做性能优化。
+
+##### <span id="head14">Looper字符串匹配 卡顿检测</span>
 
 这里介绍另一种方式来进行卡顿检测（这里指主线程，子线程一般不关心卡顿问题）--Looper。先来看一段loop代码：
 
@@ -777,7 +859,6 @@ class LooperPrinter : Printer {
 
 可以看到，我们已经获取到了卡顿时的堆栈信息，从这些信息已经足以分析出在哪里发生了什么事情。这里是在CatonDetectionActivity的manufacturingCaton处sleep()了。
 
-### 参考资料
 
 - https://www.youtube.com/watch?v=1iaHxmfZGGc&list=UU_x5XG1OV2P6uZZ5FSM9Ttw&index=1964
 - https://juejin.cn/post/6890407553457963022
