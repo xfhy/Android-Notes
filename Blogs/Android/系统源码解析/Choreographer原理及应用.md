@@ -18,7 +18,7 @@ Choreographer原理及应用
 
 ---
 
-Choreographer对于一些同学来说可能比较陌生，但是，它其实出场率是极高的。View的三大流程就是靠着Choreographer来实现的，翻译过来这个单词的意思是“编舞者”。下面我们来详细介绍，它的具体作用是什么。
+Choreographer对于一些同学来说可能比较陌生，但是，它其实出场率是极高的。View的绘制流程的开始依赖于Choreographer，翻译过来这个单词的意思是“编舞者”。下面我们来详细介绍，它的具体作用是什么。
 
 > [demo地址](https://github.com/xfhy/AllInOne)
 
