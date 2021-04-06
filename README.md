@@ -79,7 +79,7 @@
 
 ## 6. Android
 
-[xfhy_Android打包流程](/Blogs/Android/xfhy_Android打包流程.md)
+[Android打包流程](/Blogs/Android/Android打包流程.md)
 
 ### 系统源码解析
 
