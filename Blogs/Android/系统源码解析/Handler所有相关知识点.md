@@ -189,9 +189,78 @@ Message next() {
 }
 ```
 
+当`msg!=null`，如果当前时间小于头部Message的时间（消息队列是按时间顺序排列的），那么就更新等待时间nextPollTimeoutMillis，等下次再做比较。如果时间到了，就取这个消息返回。如果没有消息，nextPollTimeoutMillis被赋值为-1，这个循环又执行到nativePollOnce继续阻塞。
 
+nativePollOnce是一个native方法，它最终会执行到pollInner方法
+
+```cpp
+//Looper.cpp
+int Looper::pollInner(int timeoutMillis) {
+    ...
+    // Poll.
+    int result = POLL_WAKE;
+    mResponses.clear();
+    mResponseIndex = 0;
+    //即将处于idle状态
+    mPolling = true;
+
+    struct epoll_event eventItems[EPOLL_MAX_EVENTS];
+    //等待事件发生或者超时，在nativeWake()方法，向管道写端写入字符，则该方法会返回；
+    int eventCount = epoll_wait(mEpollFd.get(), eventItems, EPOLL_MAX_EVENTS, timeoutMillis);
+    ...
+    return result;
+}
+```
+
+从native层可以看到是利用linux的epoll机制，调用了`epoll_wait`函数来实现的阻塞，**设置`epoll_wait`的超时时间，使其在特定时间唤醒**。这里我们先计算当前时间和触发时间的差值，这个差值作为`epoll_wait`的超时时间，`epoll_wait`超时的时候就是消息触发的时候了，就不会继续阻塞，继续往下执行，这个线程就会被唤醒，去执行消息处理。
+
+### 6. MessageQueue的消息怎么被取出来的？
+
+消息的取出，即MessageQueue的next方法，第5节中已经分析next方法了。但有个问题，为什么取消息也是用的死循环？其实死循环就是为了保证一定要返回一条消息，如果没有可用消息，那么就阻塞在这里，一直到有新消息的到来。
+
+其中，nativePollOnce方法就是阻塞方法，nextPollTimeoutMillis参数就是阻塞的时间。什么时候会阻塞？两种情况：
+
+1. 有消息，但是当前时间小于消息执行时间，也就是代码中的这一句
+
+```java
+if (now < msg.when) {
+    nextPollTimeoutMillis = (int) Math.min(msg.when - now, Integer.MAX_VALUE);
+}
+```
+这时候阻塞时间就是消息时间减去当前时间，然后进入下一次循环，阻塞。
+
+2. 没有消息的时候
+
+```java
+if (msg != null) {
+    ...
+} else {
+    // No more messages.
+    nextPollTimeoutMillis = -1;
+}
+
+```
+
+-1就代表一直阻塞。
+
+### MessageQueue没有消息时会怎样？阻塞之后怎么唤醒？说说pipe/epoll机制？
+
+接着上文的逻辑，当消息不可用或者没有消息的时候就会阻塞在next方法，而**阻塞的方法是通过pipe（管道）和epoll机制**（有了这个机制，Looper的死循环就不会导致CPU使用率过高）。
+
+pipe: 管道，使用I/O流操作，实现跨进程通信，管道的一端的读，另一端写，标准的生产者消费者模式。
+
+
+**epoll机制**是一种多路复用的机制，具体逻辑就是一个线程可以监视多个描述符，当某个描述符就绪（一般是读就绪或者写就绪），能够通知程序进行相应的读写操作，这个读写操作是阻塞的。在Android中，会创建一个Linux管道（Pipe）来处理阻塞和唤醒。
+
+
+
+### 如果MessageQueue里面没有Message，那么Looper会阻塞，相当于主线程阻塞，那么点击事件是怎么传入到主线程的呢？
+
+### 如果MessageQueue里面没有Message，那么Looper会阻塞，相当于主线程阻塞，那么广播事件怎么传入主线程？
 
 ### 参考资料
 
 - https://juejin.cn/post/6943048240291905549?utm_source=gold_browser_extension
 - https://blog.csdn.net/qq_38366777/article/details/108942036
+- Android 消息处理以及epoll机制 https://www.jianshu.com/p/97e6e6c981b6
+- 我读过的最好的epoll讲解--转自”知乎“  https://blog.51cto.com/yaocoder/888374
