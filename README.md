@@ -95,6 +95,8 @@
 - [LiveData_使用及原理解析](/Blogs/Android/系统源码解析/LiveData_使用及原理解析.md)
 - [Window,Activity,View三者关系](/Blogs/Android/系统源码解析/Window,Activity,View三者关系.md)
 - [Handler同步屏障](/Blogs/Android/系统源码解析/Handler同步屏障.md)
+- [Choreographer原理及应用](/Blogs/Android/系统源码解析/Choreographer原理及应用.md)
+- [PMS安装App的过程](/Blogs/Android/系统源码解析/PMS安装App的过程.md)
 
 ### 三方库原理
 
