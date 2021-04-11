@@ -252,7 +252,112 @@ pipe: 管道，使用I/O流操作，实现跨进程通信，管道的一端的�
 
 **epoll机制**是一种多路复用的机制，具体逻辑就是一个线程可以监视多个描述符，当某个描述符就绪（一般是读就绪或者写就绪），能够通知程序进行相应的读写操作，这个读写操作是阻塞的。在Android中，会创建一个Linux管道（Pipe）来处理阻塞和唤醒。
 
+- 当消息队列为空，管道的读端等待管道中有无新的内容可读，就会通过epoll机制进入阻塞状态
+- 当有消息要处理，就会通过管道的写端写入内容，唤醒主线程
 
+那什么时候会怎么唤醒消息队列线程呢？
+
+上面的enqueueMessage方法中有个needWake字段，很明显，这个就是表示是否唤醒的字段。其中还有个字段是mBlocked，字面意思是阻塞的意思，在代码中看看
+
+```java
+//MessageQueue.java
+Message next() {
+    for (;;) {
+        synchronized (this) {
+            if (msg != null) {
+                if (now < msg.when) {
+                    nextPollTimeoutMillis = (int) Math.min(msg.when - now, Integer.MAX_VALUE);
+                } else {
+                    // Got a message.
+                    mBlocked = false;
+                    return msg;
+                }
+            } 
+            if (pendingIdleHandlerCount <= 0) {
+                // No idle handlers to run.  Loop and wait some more.
+                mBlocked = true;
+                continue;
+            }
+        }
+    }
+}
+```
+
+在获取消息的方法next中，有两个地方对mBlocked赋值：
+
+- 当获取到消息的时候，mBlocked赋值为false，表示不阻塞
+- 当没有消息要处理，也没有idleHandler要处理的时候，mBlocked赋值为true，表示阻塞
+
+再看看enqueueMessage方法，唤醒机制：
+
+```java
+boolean enqueueMessage(Message msg, long when) {
+    synchronized (this) {
+        boolean needWake;
+        if (p == null || when == 0 || when < p.when) {
+            msg.next = p;
+            mMessages = msg;
+            needWake = mBlocked;
+        } else {
+            needWake = mBlocked && p.target == null && msg.isAsynchronous();
+            Message prev;
+            for (;;) {
+                prev = p;
+                p = p.next;
+                if (p == null || when < p.when) {
+                    break;
+                }
+                if (needWake && p.isAsynchronous()) {
+                    needWake = false;
+                }
+            }
+            msg.next = p; 
+            prev.next = msg;
+        }
+
+        if (needWake) {
+            nativeWake(mPtr);
+        }
+    }
+    return true;
+}
+```
+
+1. 当链表为空或者时间小于表头消息时间，那么就插入表头，并且根据mBlocked的值来设置是否需要唤醒。再结合上述的例子，也就是当有新消息要插入表头了，这时候如果之前是阻塞状态（mBlocked为true），那么就要唤醒线程；
+2. 否则，就需要去链表中找到某个节点并插入消息，在这之前需要赋值为`needWake = mBlocked && p.target == null && msg.isAsynchronous()`。也就是在插入消息之前，需要判断是否阻塞，并且表头是不是屏障消息，并且当前消息是不是异步消息。也就是如果现在是同步屏障模式下，那么要插入的消息又刚好是异步消息，那就不用管插入消息问题了，直接唤醒线程，因为异步消息需要先执行。
+3. 最后一点，是在循环里，如果发现之前就存在异步消息，那就不唤醒，把needWake置为false。之前有异步消息了的话，肯定之前已经唤醒过了，这时候就不需要再次唤醒了。
+
+最后根据needWake的值，决定是否调用nativeWake方法唤醒next()方法。
+
+### 同步屏障和异步消息是怎么实现的？
+
+在Handler机制中，有3种消息类型：
+
+1. **同步消息**。也就是普通的消息
+2. **异步消息**，通过setAsynchronous(true)设置的消息
+3. **同步屏障消息**。通过postSyncBarrier方法添加的消息，特点是target为空，也就是没有对应的Handler
+
+这三者的关系如何？
+
+- 正常情况下，同步消息和异步消息都是正常被处理，也就是根据时间来取消息，处理消息
+- 当遇到同步屏障消息的时候，就开始从消息队列中去找异步消息，找到了再根据时间决定阻塞还是返回消息
+
+```java
+//MessageQueue.java
+Message msg = mMessages;
+if (msg != null && msg.target == null) {
+      do {
+      prevMsg = msg;
+      msg = msg.next;
+      } while (msg != null && !msg.isAsynchronous());
+}
+```
+
+也就是说同步屏障消息不会被返回，它只是一个标志，一个工具，遇到它就代表要先行处理异步消息了。所以同步屏障和异步消息的存在意义就是让有些消息可以被“**加急处理**”。比如屏幕绘制。
+
+### 同步屏障和异步消息有具体的使用场景吗？
+
+**一个经典的场景是保证VSync信号到来后立即执行绘制，而不是要等前面的同步消息**。
 
 ### 如果MessageQueue里面没有Message，那么Looper会阻塞，相当于主线程阻塞，那么点击事件是怎么传入到主线程的呢？
 
@@ -263,4 +368,4 @@ pipe: 管道，使用I/O流操作，实现跨进程通信，管道的一端的�
 - https://juejin.cn/post/6943048240291905549?utm_source=gold_browser_extension
 - https://blog.csdn.net/qq_38366777/article/details/108942036
 - Android 消息处理以及epoll机制 https://www.jianshu.com/p/97e6e6c981b6
-- 我读过的最好的epoll讲解--转自”知乎“  https://blog.51cto.com/yaocoder/888374
+- TODO  我读过的最好的epoll讲解--转自”知乎“  https://blog.51cto.com/yaocoder/888374
