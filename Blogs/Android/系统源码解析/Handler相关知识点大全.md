@@ -359,6 +359,219 @@ if (msg != null && msg.target == null) {
 
 **一个经典的场景是保证VSync信号到来后立即执行绘制，而不是要等前面的同步消息**。
 
+我们从绘制的地方scheduleTraversals方法开始看
+
+```java
+//ViewRootImpl.java
+void scheduleTraversals() {
+    if (!mTraversalScheduled) {
+        mTraversalScheduled = true;
+        // 同步屏障，阻塞所有的同步消息
+        mTraversalBarrier = mHandler.getLooper().getQueue().postSyncBarrier();
+        // 监听VSYNC信号，下一次VSYNC信号到来时，执行给进去的mTraversalRunnable。mTraversalRunnable大家应该很熟吧:doTraversal()->performTraversals()
+        mChoreographer.postCallback(
+                Choreographer.CALLBACK_TRAVERSAL, mTraversalRunnable, null);
+    }
+}
+
+//FrameDisplayEventReceiver.java  
+//它是Choreographer的内部类，当VSYNC信号来的时候，会回调这里的onVsync方法
+private final class FrameDisplayEventReceiver extends DisplayEventReceiver
+        implements Runnable {
+    @Override
+    public void onVsync(long timestampNanos, int builtInDisplayId, int frame) {
+        if (builtInDisplayId != SurfaceControl.BUILT_IN_DISPLAY_ID_MAIN) {
+            Log.d(TAG, "Received vsync from secondary display, but we don't support "
+                    + "this case yet.  Choreographer needs a way to explicitly request "
+                    + "vsync for a specific display to ensure it doesn't lose track "
+                    + "of its scheduled vsync.");
+            scheduleVsync();
+            return;
+        }
+        
+        //timestampNanos是VSYNC回调的时间戳  以纳秒为单位
+        long now = System.nanoTime();
+        if (timestampNanos > now) {
+            timestampNanos = now;
+        }
+
+        if (mHavePendingVsync) {
+            Log.w(TAG, "Already have a pending vsync event.  There should only be "
+                    + "one at a time.");
+        } else {
+            mHavePendingVsync = true;
+        }
+
+        mTimestampNanos = timestampNanos;
+        mFrame = frame;
+        //自己是一个Runnable，把自己传了进去
+        Message msg = Message.obtain(mHandler, this);
+        //异步消息，保证优先级
+        msg.setAsynchronous(true);
+        mHandler.sendMessageAtTime(msg, timestampNanos / TimeUtils.NANOS_PER_MS);
+    }
+    
+    @Override
+    public void run() {
+        ...
+        //回调mTraversalRunnable，执行它的run方法
+        doFrame(mTimestampNanos, mFrame);
+    }
+}
+
+```
+
+在监听VSYNC信号之前，需要往消息队列中插入一个同步屏障消息，以保证当VSYNC信号来临时发送的异步消息的优先级。这个异步消息是用于界面绘制的，所以优先级必须高才行，界面绘制优于一切。
+
+Choreographer的相关知识点特别多，这里就不展开讲了，可以看我之前的文章：[Choreographer原理及应用](https://github.com/xfhy/Android-Notes)
+
+### Message消息被分发之后会怎么处理？消息怎么复用的？
+
+再看看loop方法，在消息分发之后，也就是执行了dispatchMessage方法之后，还偷偷做了一个操作-recycleUnchecked
+
+```java
+//Looper.java
+public static void loop() {
+    for (;;) {
+        Message msg = queue.next(); // might block
+
+        try {
+            msg.target.dispatchMessage(msg);
+        } 
+
+        msg.recycleUnchecked();
+    }
+}
+
+//Message.java
+private static Message sPool;
+private static final int MAX_POOL_SIZE = 50;
+void recycleUnchecked() {
+    //释放资源
+    flags = FLAG_IN_USE;
+    what = 0;
+    arg1 = 0;
+    arg2 = 0;
+    obj = null;
+    replyTo = null;
+    sendingUid = UID_NONE;
+    workSourceUid = UID_NONE;
+    when = 0;
+    target = null;
+    callback = null;
+    data = null;
+
+    synchronized (sPoolSync) {
+        if (sPoolSize < MAX_POOL_SIZE) {
+            //从这里可以看出 消息池是一个单链表结构，最多存放50个
+            next = sPool;
+            sPool = this;
+            sPoolSize++;
+        }
+    }
+}
+```
+在recycleUnchecked方法中，释放了所有资源，然后将当前的空消息插入到sPool表头。这里的sPool就是一个消息对象池，它也是一个链表结构的消息，最大长度为50。那么Message是怎么复用的呢？在Message的静态方法obtain中
+
+```java
+public static Message obtain() {
+    synchronized (sPoolSync) {
+        if (sPool != null) {
+            Message m = sPool;
+            sPool = m.next;
+            m.next = null;
+            m.flags = 0; // clear in-use flag
+            sPoolSize--;
+            return m;
+        }
+    }
+    return new Message();
+}
+```
+直接复用消息池中的第一条消息，然后sPool指向下一个节点，消息池数量减一。
+
+### Looper是干什么的？怎么获取当前线程的Looper？为什么不直接用Map存储线程和对象呢？
+
+在Handler发送消息之后，消息就被存储到MessageQueue中，而Looper就是一个管理消息队列的角色。Looper会从MessageQueue中不断的获取消息（可能会阻塞），也就是loop方法，并将消息交回给Handler进行处理。
+
+而Looper的获取就是通过ThreadLocal机制
+
+```java
+static final ThreadLocal<Looper> sThreadLocal = new ThreadLocal<Looper>();
+
+public static void prepare() {
+    prepare(true);
+}
+private static void prepare(boolean quitAllowed) {
+    if (sThreadLocal.get() != null) {
+        throw new RuntimeException("Only one Looper may be created per thread");
+    }
+    sThreadLocal.set(new Looper(quitAllowed));
+}
+
+public static @Nullable Looper myLooper() {
+    return sThreadLocal.get();
+}
+```
+
+通过prepare方法创建Looper并且加入到sThreadLocal中，通过myLooper方法从sThreadLocal中获取Looper。
+
+### ThreadLocal运行机制？这种机制设计的好处？
+
+先看一下ThreadLocal源码：
+```java
+//ThreadLocal.java
+public T get() {
+    Thread t = Thread.currentThread();
+    //获取当前线程的threadLocals属性，它是一个ThreadLocalMap对象，可以看成是一个Map，它的key是ThreadLocal，value是ThreadLocal需要存储的数据
+    ThreadLocalMap map = getMap(t);
+    if (map != null) {
+        ThreadLocalMap.Entry e = map.getEntry(this);
+        if (e != null) {
+            @SuppressWarnings("unchecked")
+            T result = (T)e.value;
+            return result;
+        }
+    }
+    return setInitialValue();
+}
+
+ThreadLocalMap getMap(Thread t) {
+    return t.threadLocals;
+}
+
+private T setInitialValue() {
+    T value = initialValue();
+    Thread t = Thread.currentThread();
+    ThreadLocalMap map = getMap(t);
+    if (map != null)
+        map.set(this, value);
+    else
+        createMap(t, value);
+    return value;
+}
+
+public void set(T value) {
+    Thread t = Thread.currentThread();
+    ThreadLocalMap map = getMap(t);
+    if (map != null)
+        map.set(this, value);
+    else
+        createMap(t, value);
+}
+```
+
+从ThreadLocal类中的get和set方法可以大致看出来，有一个ThreadLocalMap变量，这个变量存储着键值对形式的数据。key是ThreadLocal，value是T，即需要存储的值。
+
+而ThreadLocalMap是从哪里来的？它其实就是Thread里面的一个属性
+
+```java
+//Thread.java
+ThreadLocal.ThreadLocalMap threadLocals = null;
+```
+
+原来这个ThreadLocalMap变量是存储在线程类Thread中的。
+
 ### 如果MessageQueue里面没有Message，那么Looper会阻塞，相当于主线程阻塞，那么点击事件是怎么传入到主线程的呢？
 
 ### 如果MessageQueue里面没有Message，那么Looper会阻塞，相当于主线程阻塞，那么广播事件怎么传入主线程？
