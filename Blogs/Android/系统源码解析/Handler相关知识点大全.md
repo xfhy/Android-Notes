@@ -570,7 +570,255 @@ public void set(T value) {
 ThreadLocal.ThreadLocalMap threadLocals = null;
 ```
 
-原来这个ThreadLocalMap变量是存储在线程类Thread中的。
+原来这个ThreadLocalMap变量是存储在线程类Thread中的。所以ThreadLocal的基本机制就搞清楚了：在每个线程中都有一个threadLocals变量，这个变量存储着ThreadLocal和对应的需要保存的对象。这样带来的好处就是，在不同的线程，访问同一个ThreadLocal对象，但是能获取到的值却不一样。
+
+其实就是其内部获取到的Map不同，Map和Thread绑定，所以虽然访问的是同一个ThreadLocal对象，但是访问的Map却不是同一个，所以取的值也不一样。
+
+这样做的好处是什么？为什么不直接用Map存储线程和对象呢？一个Map存储所有线程和对象，不好的地方就在于会很混乱，每个线程之间有了联系，也容易造成内存泄露。最好是把数据交给线程内部管理，不用关心多线程安全问题，操作也比较简单，解耦。
+
+### 还有哪些地方运用到了ThreadLocal机制？
+
+Choreographer
+
+```java
+public final class Choreographer {
+    // Thread local storage for the choreographer.
+    private static final ThreadLocal<Choreographer> sThreadInstance =
+            new ThreadLocal<Choreographer>() {
+        @Override
+        protected Choreographer initialValue() {
+            Looper looper = Looper.myLooper();
+            if (looper == null) {
+                throw new IllegalStateException("The current thread must have a looper!");
+            }
+            Choreographer choreographer = new Choreographer(looper, VSYNC_SOURCE_APP);
+            if (looper == Looper.getMainLooper()) {
+                mMainInstance = choreographer;
+            }
+            return choreographer;
+        }
+    };
+
+    private static volatile Choreographer mMainInstance;
+}
+```
+
+Choreographer主要是主线程用的，用来配合VSYNC中断信号。这里使用Choreographer更多的意义在于完成线程单例的功能。
+
+### 可以多次创建Looper吗？
+
+Looper的创建是通过Looper.prepare()方法实现的，而在prepare方法中就判断了，当前线程是否存在Looper对象，如果有，就会直接抛出异常。
+
+```java
+private static void prepare(boolean quitAllowed) {
+    if (sThreadLocal.get() != null) {
+        throw new RuntimeException("Only one Looper may be created per thread");
+    }
+    sThreadLocal.set(new Looper(quitAllowed));
+}
+
+private Looper(boolean quitAllowed) {
+    mQueue = new MessageQueue(quitAllowed);
+    mThread = Thread.currentThread();
+}
+```
+
+所以同一个线程，只能创建一个Looper，多次创建会报错。
+
+### Looper中的quitAllowed字段是什么？
+
+从字面意思看：是否允许退出。看看在哪些地方用到了
+
+```java
+//Looper.java
+private Looper(boolean quitAllowed) {
+    mQueue = new MessageQueue(quitAllowed);
+    mThread = Thread.currentThread();
+}
+
+//MessageQueue.java
+MessageQueue(boolean quitAllowed) {
+    mQuitAllowed = quitAllowed;
+    mPtr = nativeInit();
+}
+void quit(boolean safe) {
+    if (!mQuitAllowed) {
+        throw new IllegalStateException("Main thread not allowed to quit.");
+    }
+
+    synchronized (this) {
+        if (mQuitting) {
+            return;
+        }
+        mQuitting = true;
+
+        if (safe) {
+            removeAllFutureMessagesLocked();
+        } else {
+            removeAllMessagesLocked();
+        }
+
+        // We can assume mPtr != 0 because mQuitting was previously false.
+        nativeWake(mPtr);
+    }
+}
+```
+
+在MessageQueue得到quit方法中用到了，如果这个字段为false，表示不允许退出，就会报错。
+
+这个quit方法是干嘛的？很明显，是用于退出Looper的loop循环的，终止消息循环。什么场景下需要用到这个quit方法？当自己开了个线程维护Looper的时候。比如HandlerThread中，在HandlerThread#quit()中使用到了这个。
+
+这个safe是干啥的？
+
+1. 首先设置mQuitting为true
+2. 然后判断是否安全退出，如果是安全退出，就执行removeAllFutureMessagesLocked，它内部的逻辑就是清空所有的延迟消息（意思是之前没处理的非延迟消息还是需要去处理）。
+3. 如果不是安全退出，就执行removeAllMessagesLocked方法，直接清空所有消息，然后设置消息队列指向空。
+
+```java
+//MessageQueue.java
+private void removeAllMessagesLocked() {
+    //遍历单链表 执行Message的recycleUnchecked方法
+    Message p = mMessages;
+    while (p != null) {
+        Message n = p.next;
+        p.recycleUnchecked();
+        p = n;
+    }
+    mMessages = null;
+}
+
+private void removeAllFutureMessagesLocked() {
+    final long now = SystemClock.uptimeMillis();
+    Message p = mMessages;
+    if (p != null) {
+        if (p.when > now) {
+            //全是延迟消息  直接移除算了
+            removeAllMessagesLocked();
+        } else {
+            //遍历单链表 找出第一个延迟消息
+            Message n;
+            for (;;) {
+                n = p.next;
+                if (n == null) {
+                    return;
+                }
+                if (n.when > now) {
+                    break;
+                }
+                p = n;
+            }
+            //把延迟消息全部回收了
+            p.next = null;
+            do {
+                p = n;
+                n = p.next;
+                p.recycleUnchecked();
+            } while (n != null);
+        }
+    }
+}
+```
+
+然后看看当调用quit方法之后，消息的发送和处理：
+
+```java
+//MessageQueue.java
+//消息发送
+boolean enqueueMessage(Message msg, long when) {
+    synchronized (this) {
+        if (mQuitting) {
+            IllegalStateException e = new IllegalStateException(
+                    msg.target + " sending message to a Handler on a dead thread");
+            Log.w(TAG, e.getMessage(), e);
+            msg.recycle();
+            return false;
+        }
+    }
+}
+```
+
+当调用了quit方法之后，mQuitting为true，消息就发不出去了，会报错。
+
+再看看消息的处理，loop和next方法
+
+```java
+//MessageQueue.java
+Message next() {
+    for (;;) {
+        synchronized (this) {
+            //Process the quit message now that all pending messages have been handled.
+            if (mQuitting) {
+                dispose();
+                return null;
+            } 
+        }  
+    }
+}
+
+//Looper.java
+public static void loop() {
+    for (;;) {
+        Message msg = queue.next();
+        if (msg == null) {
+            // No message indicates that the message queue is quitting.
+            return;
+        }
+    }
+}
+```
+
+很明显，当mQuitting为true的时候，next方法返回null，那么loop方法中就会退出死循环。
+
+这个quit方法一般是什么时候使用呢？不再需要消息循环的时候。比如在子线程中初始化了Looper并开启了loop循环，则可以在线程结束时退出loop。
+
+### Looper.loop方法是死循环，为什么不会卡死？（ANR）
+
+关于这个问题，Gityuan曾经回答过，[知乎原文 Android中为什么主线程不会因为Looper.loop()里的死循环卡死？](https://www.zhihu.com/question/34652589)
+
+我大致总结如下：
+
+1. 主线程中，Activity、Service等组件的生命周期和View的绘制等操作全在里面控制，所以主线程是不能退出的。如何保证不退出？简单做法就是可执行代码一直执行下去的，死循环便能保证不会被退出。
+2. 当然并非简单死循环，无消息时休眠（利用Linux的pipe/epoll机制）。此时主线程释放CPU资源进入休眠状态，直到下个消息到达或者有事物发生。所以死循环也不会特别消耗CPU资源。
+3. 死循环时，如何去处理其他事务？通过创建新线程的方式。比如ApplicationThread是在binder线程中运行的，会接受AMS发来的事件。
+4. 在收到跨进程消息后，会交给主线程的Handler再进行消息分发。所以Activity的生命周期都是依靠主线程的Looper.loop，当收到不同Message时则采用相应措施，比如收到msg=H.LAUNCH_ACTIVITY，则调用ActivityThread.handleLaunchActivity()方法，最终执行到onCreate方法。
+
+下面是Gityuan的原回答（防止这么好的资料掉了，copy过来）：
+
+#### (1) Android中为什么主线程不会因为Looper.loop()里的死循环卡死？
+
+这里涉及线程，先说说进程/线程，进程：每个App运行前首先创建一个进程，该进程是由Zygote fork出来的，用于承载App上运行的各种Activity/Service等组件。进程对于上层应用来说是完全透明的，这也是Google有意为之，让App程序都是运行在Android Runtime。大多数情况下App就运行在一个进程中，除非在AndroidManifest.xml中配置android:process属性或通过native代码fork进程。
+
+线程：线程对应用来说非常常见，比如每次new Thread().start()都会创建一个新的线程。该线程与App所在进程之间资源共享，从Linux角度来说进程与线程除了是否共享资源外，并没有本质区别，都是一个`task_struct`结构体，在CPU看来进程或线程无非就是一段可执行的代码，CPU采用CFS调度算法，保证每个task都尽可能公平的享有CPU时间片。
+
+有了这些准备，再说说死循环问题：
+
+对于线程既然是一段可执行的代码，当可执行代码执行完成后，线程生命周期便该终止了，线程退出。而对于主线程，我们绝不希望会被运行一段时间，自己就退出，那么如何保证能一直存活呢？**简单做法就是可执行代码是能一直执行下去的，死循环便能保证不会被退出**。例如，binder线程也是采用死循环的方法，通过循环方式不同于Binder驱动进行读写操作，当然并非简单地死循环，无消息时会休眠。但这里可能又引发了另一个问题，既然是死循环又如何去处理其他事务呢？通过创建新线程的方式。
+
+真正会卡死主线程的操作是在回调方法onCreate/onStart/onResume等操作时间过长，会导致掉帧，甚至发生ANR，Looper.loop本身不会导致应用卡死。
+
+#### (2) 没看到哪里有相关代码为这个死循环准备了一个新线程去运转？
+
+事实上，会在进入死循环之前便创建了新binder线程，在代码ActivityThread.main()中
+
+```java
+public static void main(String[] args) {
+    ....
+
+    //创建Looper和MessageQueue对象，用于处理主线程的消息
+    Looper.prepareMainLooper();
+
+    //创建ActivityThread对象
+    ActivityThread thread = new ActivityThread(); 
+
+    //建立Binder通道 (创建新线程)
+    thread.attach(false);
+
+    Looper.loop(); //消息循环运行
+    throw new RuntimeException("Main thread loop unexpectedly exited");
+}
+```
+
+thread.attach(false)
 
 ### 如果MessageQueue里面没有Message，那么Looper会阻塞，相当于主线程阻塞，那么点击事件是怎么传入到主线程的呢？
 
@@ -581,4 +829,6 @@ ThreadLocal.ThreadLocalMap threadLocals = null;
 - https://juejin.cn/post/6943048240291905549?utm_source=gold_browser_extension
 - https://blog.csdn.net/qq_38366777/article/details/108942036
 - Android 消息处理以及epoll机制 https://www.jianshu.com/p/97e6e6c981b6
-- TODO  我读过的最好的epoll讲解--转自”知乎“  https://blog.51cto.com/yaocoder/888374
+- 我读过的最好的epoll讲解--转自”知乎“  https://blog.51cto.com/yaocoder/888374
+- https://www.zhihu.com/question/34652589
+- TODO https://juejin.cn/post/6950146347731255327
