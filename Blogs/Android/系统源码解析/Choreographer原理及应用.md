@@ -859,6 +859,7 @@ class LooperPrinter : Printer {
 
 可以看到，我们已经获取到了卡顿时的堆栈信息，从这些信息已经足以分析出在哪里发生了什么事情。这里是在CatonDetectionActivity的manufacturingCaton处sleep()了。
 
+### 参考资料
 
 - https://www.youtube.com/watch?v=1iaHxmfZGGc&list=UU_x5XG1OV2P6uZZ5FSM9Ttw&index=1964
 - https://juejin.cn/post/6890407553457963022
