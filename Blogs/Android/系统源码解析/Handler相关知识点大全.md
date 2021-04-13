@@ -818,7 +818,31 @@ public static void main(String[] args) {
 }
 ```
 
-thread.attach(false)
+**thread.attach(false);便会创建一个Binder线程（具体是指ApplicationThread，Binder的服务端，用于接收系统服务AMS发送来的事件），该Binder线程通过Handler将Message发送给主线程**，具体过程可查看[startService流程分析](http://gityuan.com/2016/03/06/start-service/)，这里不展开说，简单说Binder用于进程间通信，采用C/S架构。关于binder感兴趣的朋友，可以查看[为什么Android要采用Binder作为IPC机制？ - Gityuan的回答](https://www.zhihu.com/question/39440766/answer/89210950)
+
+另外，**ActivityThread实际上并非线程**，不像HandlerThread类，ActivityThread并没有真正继承Thread类，只是往往运行在主线程，给人以线程的感觉，其实承载ActivityThread的主线程就是由Zygote fork而创建的进程。
+
+> ps: ApplicationThread也不是继承自Thread，而是继承自IApplicationThread.Stub，运行在Binder线程。
+
+**主线程的死循环一直运行是不是特别消耗CPU资源呢？** 其实不然，这里就涉及到**Linux pipe/epoll机制**，简单说就是在主线程的MessageQueue没有消息时，便阻塞在loop的queue.next()中的nativePollOnce()方法里，详情见[Android消息机制1-Handler（Java层）](http://gityuan.com/2015/12/26/handler-message-framework/),此时主线程会释放CPU资源进入休眠状态，直到下个消息到达或者有事务发生，通过往pipe管道写端写入数据来唤醒主线程工作。这里采用的epoll机制，是一种IO多路复用机制，可以同时监控多个描述符，当某个描述符就绪（读或写就绪），则立即通知相应程序进行读或写操作，本质同步I/O，即读写是阻塞的。所以说，**主线程大多数时候都是出于休眠状态，并不会消耗大量CPU资源**。
+
+#### (3) Activity的生命周期是怎么实现在死循环体外能够执行起来的？
+
+ActivityThread的内部类H继承于Handler，通过Handler消息机制，简单说Handler机制用于同一个进程的线程间通信。
+
+**Activity的生命周期都是依靠主线程的Looper.loop，当收到不同Message时则采用相应措施**：在H.handleMessage(msg)方法中，根据接收到不同的msg，指向相应的生命周期。比如收到`msg=H.LAUNCH_ACTIVITY`(以前是这条消息，好像是从Android P开始这些Activity的生命周期都用一条消息`EXECUTE_TRANSACTION`来表示了)，则调用ActivityThread.handleLaunchActivity()方法，最终会通过反射机制，创建Activity实例，然后再执行Activity.onCreate()等方法。再比如收到`msg=H.PAUSE_ACTIVITY`，则调用ActivityThread.handlePauseActivity()方法，最终会执行Activity.onPause等方法。上述过程，我只挑核心逻辑讲，真正该过程远比这复杂。
+
+**主线程的消息又从哪里来的呢**？当然是App进程中的其他线程通过Handler发送给主线程。
+
+最后，从进程与线程间通信的角度，通过一张图加深大家对App运行过程的理解：
+
+![](https://raw.githubusercontent.com/xfhy/Android-Notes/master/Images/App%E8%BF%9B%E7%A8%8B%E4%B8%8Esystem_server%E8%BF%9B%E7%A8%8B%E7%9A%84%E4%BA%A4%E4%BA%92.jpeg)
+
+**`system_server`进程是系统进程**，java framework框架的核心载体，里面运行了大量的系统服务，比如这里提供ApplicationThreadProxy（简称ATP），ActivityManagerService（AMS），这两个服务都运行在`system_server`进程的不同线程中，由于ATP和AMS都是基于IBinder接口，都是binder线程，binder线程的创建与销毁都是由binder驱动来决定的。
+
+**App进程则是我们常说的应用程序**，主线程主要负责Activity/Service等组件的生命周期以及UI相关操作都运行在这个线程；另外，每个App进程中至少会有两个binder线程：ApplicationThread(简称AT)和ActivityManagerProxy（简称AMP），除了图中画的线程，其中还有很多线程，比如signalcatcher线程等，这里就不一一列举。
+
+Binder用于不同进程之间通信，由一个进程的Binder客户端向另一个进行的服务端发送事务，比如图中线程2向线程4发送事务；而Handler用于同一个进程中不同线程的通信，比如通知线程4向主线程发送消息。
 
 ### 如果MessageQueue里面没有Message，那么Looper会阻塞，相当于主线程阻塞，那么点击事件是怎么传入到主线程的呢？
 
