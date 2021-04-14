@@ -844,6 +844,112 @@ ActivityThread的内部类H继承于Handler，通过Handler消息机制，简单
 
 Binder用于不同进程之间通信，由一个进程的Binder客户端向另一个进行的服务端发送事务，比如图中线程2向线程4发送事务；而Handler用于同一个进程中不同线程的通信，比如通知线程4向主线程发送消息。
 
+结合图说说Activity生命周期，比如暂停Activity，流程如下：
+
+1. `system_server`进程中的线程1的AMS调用线程2的ATP；（由于同一个进程的线程间资源共享，可以相互直接调用，但需要注意多线程并发问题）
+2. 线程2通过binder传输到App进程的线程4（ApplicationThread）
+3. 线程4通过Handler消息机制，将暂停Activity的消息发送给主线程
+4. 主线程在Looper.loop()中循环遍历消息，当收到暂停Activity的消息时，便将消息分发给ActivityThread.H.handleMessage()方法，再经过方法的调用，最后便会调用到Activity.onPause()，当onPause()处理完后，继续循环loop下去。
+
+### Message是怎么找到它所属的Handler然后进行分发的？
+
+在loop方法中，找到要处理的Message，然后调用了这么一句代码处理消息：
+
+```java
+msg.target.dispatchMessage(msg);
+```
+
+所以是将消息交给了msg.target来处理，那这个target是什么？
+
+```java
+//Handler.java
+private boolean enqueueMessage(MessageQueue queue,Message msg,long uptimeMillis) {
+    msg.target = this;
+   
+    return queue.enqueueMessage(msg, uptimeMillis);
+}
+```
+在使用Handler发送消息的时候，会设置msg.target=this，所以target就是当初把消息加到消息队列的那个Handler。
+
+### Handler的post(Runnable)与sendMessage有什么区别？
+
+Handler中主要的发送消息可以分为两种：
+- post(Runnable)
+- sendMessage()
+
+```java
+//Handler.java
+public final boolean post(@NonNull Runnable r) {
+   return  sendMessageDelayed(getPostMessage(r), 0);
+}
+private static Message getPostMessage(Runnable r) {
+    Message m = Message.obtain();
+    m.callback = r;
+    return m;
+}
+```
+
+通过post的源码可知，其实post和sendMessage的区别在于：post方法给Message设置了一个callback，这个callback就是传入的Runnable。
+
+那么这个callback有什么用？
+
+```java
+//Handler.java
+public void dispatchMessage(@NonNull Message msg) {
+    if (msg.callback != null) {
+        handleCallback(msg);
+    } else {
+        if (mCallback != null) {
+            if (mCallback.handleMessage(msg)) {
+                return;
+            }
+        }
+        handleMessage(msg);
+    }
+}
+
+private static void handleCallback(Message message) {
+    message.callback.run();
+}
+```
+
+这段代码可以分为三部分看：
+
+1. 如果msg.callback不为空，也就是通过post方法发送消息的时候，会把消息交给这个msg.callback进行处理，没有后续了
+2. 如果msg.callback为空，也就是通过sendMessage发送消息的时候，会判断Handler当前的mCallback是否为空，如果不为空就交给handler.mCallback.handleMessage处理
+3. 如果mCallback.handleMessage返回true，则没有后续了
+4. 如果mCallback.handleMessage返回false，则调用Handler类重写的handleMessage方法
+
+所以post(Runnable)与sendMessage的区别就在于后续消息的处理方式，是交给msg.callback或者Handler.handleMessage。还有一种情况是交给Handler.Callback处理，这个Handler自己的Callback是可以通过构造方法传入的。
+
+### Handler.Callback.handleMessage和Handler.handleMessage有什么不一样？为什么这样设计？
+
+接着上面的diamante说，这两个处理方法的区别在于Handler.Callback.handleMessage方法的返回值决定着是否需要再继续执行Handler.handleMessage
+
+- 如果Handler.Callback.handleMessage返回true,则不再继续执行Handler.handleMessage
+- 如果返回false，则两个方法都要执行
+
+那么什么时候有Callback，什么时候没有呢？这涉及到两种Handler的创建方式
+
+```kotlin
+val handler1= object : Handler(){
+    override fun handleMessage(msg: Message) {
+        super.handleMessage(msg)
+    }
+}
+
+//这个构造方法在API 30上已被废弃,使用new Handler(Looper.myLooper(), callback)来代替
+val handler2 = Handler(object : Handler.Callback {
+    override fun handleMessage(msg: Message): Boolean {
+        return true
+    }
+})
+```
+
+常用的方法是第1 种，派生一个Handler的子类并重写handleMessage方法。
+
+而第2种就是系统给我们提供了一种不需要派生子类的使用方法，只需要传入一个callback即可。第2种方式的场景：插件化，hook ActivityThread.H的callback，用自定义的Callback替换H中的mCallback，从而可以感知startActivity启动，进而进行Intent替换等一系列骚操作。
+
 ### 如果MessageQueue里面没有Message，那么Looper会阻塞，相当于主线程阻塞，那么点击事件是怎么传入到主线程的呢？
 
 ### 如果MessageQueue里面没有Message，那么Looper会阻塞，相当于主线程阻塞，那么广播事件怎么传入主线程？
