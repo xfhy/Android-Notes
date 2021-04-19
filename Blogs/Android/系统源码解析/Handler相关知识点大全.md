@@ -950,6 +950,276 @@ val handler2 = Handler(object : Handler.Callback {
 
 而第2种就是系统给我们提供了一种不需要派生子类的使用方法，只需要传入一个callback即可。第2种方式的场景：插件化，hook ActivityThread.H的callback，用自定义的Callback替换H中的mCallback，从而可以感知startActivity启动，进而进行Intent替换等一系列骚操作。
 
+### Handler、Looper、MessageQueue、线程是一一对应关系吗？
+
+- 一个线程最多只会存在一个Looper对象，所以线程和Looper是一一对应的
+- MessageQueue对象是在new Looper的时候创建的，所以Looper和MessageQueue是一一对应的
+- Handler的作用只是将消息加到MessageQueue中，并后续取出消息后，根据消息的target字段分发给当初的那个Handler，所以Handler对于Looper是可以多对一的，也就是多个Handler对象都可以用同一个线程、同一个Looper、同一个MessageQueue。
+
+总结：Looper、MessageQueue、线程是一一对应关系，而它们与Handler是可以一对多的。
+
+### ActivityThread中做了哪些关于Handler的工作？（为什么主线程不需要单独创建Looper）
+
+主要做了两件事：
+
+1. 在main方法中，创建了主线程的Looper和MessageQueue，并且调用loop方法开启了主线程的消息循环
+
+```java
+//ActivityThread.java
+public static void main(String[] args) {
+    ...
+    Looper.prepareMainLooper();
+    if (sMainThreadHandler == null) {
+        sMainThreadHandler = thread.getHandler();
+    }
+    Looper.loop();
+    throw new RuntimeException("Main thread loop unexpectedly exited");
+}
+```
+
+2. 创建了一个Handler来进行四大组件的启动停止、生命周期控制等事件处理
+
+```java
+//ActivityThread.java
+final H mH = new H();
+
+class H extends Handler {
+    public static final int BIND_APPLICATION        = 110;
+    public static final int EXIT_APPLICATION        = 111;
+    public static final int RECEIVER                = 113;
+    public static final int CREATE_SERVICE          = 114;
+    public static final int STOP_SERVICE            = 116;
+    public static final int BIND_SERVICE            = 121;
+    ...
+}
+```
+
+### IdleHandler是啥？有什么使用场景？
+
+IdleHandler可以对启动过程进行优化，它可以在主线程空闲时执行任务，而不影响其他任务的执行。比如在空闲的时候再开启常驻通知栏，也是ok的。
+
+之前说过，当MessageQueue没有消息的时候，就会阻塞在next方法中，其实在阻塞之前，MessageQueue还好做一件事，就是检查是否存在IdleHandler，如果有，就会去执行它的queueIdle方法。
+
+```java
+//MessageQueue.java
+private final ArrayList<IdleHandler> mIdleHandlers = new ArrayList<IdleHandler>();
+private IdleHandler[] mPendingIdleHandlers;
+
+Message next() {
+    int pendingIdleHandlerCount = -1;
+    for (;;) {
+        synchronized (this) {
+            ...
+            // If first time idle, then get the number of idlers to run.
+            // Idle handles only run if the queue is empty or if the first message
+            // in the queue (possibly a barrier) is due to be handled in the future.
+            //当消息执行完毕，就设置pendingIdleHandlerCount
+            if (pendingIdleHandlerCount < 0
+                    && (mMessages == null || now < mMessages.when)) {
+                pendingIdleHandlerCount = mIdleHandlers.size();
+            }
+            if (pendingIdleHandlerCount <= 0) {
+                // No idle handlers to run.  Loop and wait some more.
+                mBlocked = true;
+                continue;
+            }
+            
+            //初始化mPendingIdleHandlers
+            if (mPendingIdleHandlers == null) {
+                mPendingIdleHandlers = new IdleHandler[Math.max(pendingIdleHandlerCount, 4)];
+            }
+            //mIdleHandlers转为数组
+            mPendingIdleHandlers = mIdleHandlers.toArray(mPendingIdleHandlers);
+        }
+
+        // 遍历数组，处理每个IdleHandler
+        for (int i = 0; i < pendingIdleHandlerCount; i++) {
+            final IdleHandler idler = mPendingIdleHandlers[i];
+            mPendingIdleHandlers[i] = null; // release the reference to the handler
+
+            boolean keep = false;
+            try {
+                keep = idler.queueIdle();
+            } catch (Throwable t) {
+                Log.wtf(TAG, "IdleHandler threw exception", t);
+            }
+
+            //如果queueIdle方法返回false，则处理完就删除这个IdleHandler
+            if (!keep) {
+                synchronized (this) {
+                    mIdleHandlers.remove(idler);
+                }
+            }
+        }
+
+        // Reset the idle handler count to 0 so we do not run them again.
+        pendingIdleHandlerCount = 0;
+        
+        // While calling an idle handler, a new message could have been delivered
+        // so go back and look again for a pending message without waiting.
+        nextPollTimeoutMillis = 0;
+    }
+}
+```
+
+当没有消息处理的时候，就会去处理这个mIdleHandlers集合里面的每个每个IdleHandler对象，并调用其queueIdle方法。最后根据queueIdle返回值判断是否用完删除当前的IdleHandler。 现在看看IdleHandler是怎么加进去的：
+
+```java
+Looper.myQueue().addIdleHandler(new IdleHandler() {  
+    @Override  
+    public boolean queueIdle() {  
+        //做事情
+        return false;    
+    }  
+});
+
+//MessageQueue.java
+public void addIdleHandler(@NonNull IdleHandler handler) {
+    if (handler == null) {
+        throw new NullPointerException("Can't add a null IdleHandler");
+    }
+    synchronized (this) {
+        mIdleHandlers.add(handler);
+    }
+}
+```
+
+综上所述，IdleHandler就是当消息队列里面没有当前要处理的消息了，需要阻塞之前，可以做一些空闲任务的处理。 常见的使用场景有：启动优化。
+
+我们一般会把一些事件（比如界面View的findViewById、做一些其他操作之类的）放到onCreate方法或者onResume方法中。但是这两个方法其实都是在界面绘制之前调用的，也就是说一定程度上这两个方法的耗时会影响到启动时间。
+
+我们可以把一些操作放到IdleHandler中，也就是界面绘制完成之后才去调用，这样就能减少启动时间了。
+
+但是，这里需要注意下，可能有坑。如果使用不当，IdleHandler会一直不执行，比如在View的onDraw方法里面直接或间接地调用invalidate方法，或者是循环执行补间动画，这些操作会让MassageQueue中一直有消息，一直空闲不下来，故而IdleHandler就一直得不到执行。
+
+其原因在于onDraw方法中执行invalidate，最终会执行到ViewRootImpl，然后会添加一个同步屏障消息，在等到异步消息之前，会阻塞在next方法，而等到FrameDisplayEventReceiver异步任务之后又会执行onDraw方法，从而无限循环。 补间动画也是类似的道理。
+
+具体可以看看下面几篇文章：
+
+- [Choreographer原理及应用](https://github.com/xfhy/Android-Notes/blob/master/Blogs/Android/%E7%B3%BB%E7%BB%9F%E6%BA%90%E7%A0%81%E8%A7%A3%E6%9E%90/Choreographer%E5%8E%9F%E7%90%86%E5%8F%8A%E5%BA%94%E7%94%A8.md)
+- [Android 避坑指南：实际经历来说说IdleHandler的坑](https://mp.weixin.qq.com/s/dh_71i8J5ShpgxgWN5SPEw)
+- [View动画Animation运行原理解析](https://www.cnblogs.com/dasusu/p/8287822.html)
+
+### HandlerThread是啥？有什么使用场景？
+
+直接看源码：
+
+```java
+//HandlerThread.java
+public class HandlerThread extends Thread {
+    @Override
+    public void run() {
+        Looper.prepare();
+        synchronized (this) {
+            mLooper = Looper.myLooper();
+            notifyAll();
+        }
+        Process.setThreadPriority(mPriority);
+        onLooperPrepared();
+        Looper.loop();
+    }
+}
+```
+
+HandlerThread继承自Thread，说明它是一个线程。线程内部只做一件事，就是跑Looper的loop循环。既然里面已经有了一个Looper在那里执行loop循环，那么我们就可以往这个Looper的MessageQueue里面发消息，最终消息的分发执行是在HandlerThread这个子线程中。
+
+一般使用如下：
+
+```java
+HandlerThread handlerThread = new HandlerThread("downloadImage");
+
+handlerThread.start();
+
+/**
+ * 该callback运行于子线程
+ */
+class ChildCallback implements Handler.Callback {
+    @Override
+    public boolean handleMessage(Message msg) {
+        //在子线程中进行相应的业务操作
+        return false;
+    }
+}
+
+//子线程Handler
+Handler childHandler = new Handler(handlerThread.getLooper(),new ChildCallback());
+
+//发个消息
+childHandler.sendEmptyMessageDelayed(1,1000);
+```
+
+我们发现在HandlerThread的run方法中，有一个notifyAll()的调用，用于唤醒其他线程，那哪里调用了wait方法呢？
+
+```java
+//HandlerThread.java
+public Looper getLooper() {
+    if (!isAlive()) {
+        return null;
+    }
+    
+    // If the thread has been started, wait until the looper has been created.
+    synchronized (this) {
+        while (isAlive() && mLooper == null) {
+            try {
+                wait();
+            } catch (InterruptedException e) {
+            }
+        }
+    }
+    return mLooper;
+}
+```
+
+在获取Looper的时候，可能会阻塞住，可能Looper还没有初始化完成。所以wait的意思就是等待Looper创建好，那边创建好之后再通知这边正确返回Looper。
+
+### IntentService是啥？有什么使用场景？
+
+直接上源码：
+
+```java
+//IntentService.java
+public abstract class IntentService extends Service {
+
+    private final class ServiceHandler extends Handler {
+        public ServiceHandler(Looper looper) {
+            super(looper);
+        }
+
+        @Override
+        public void handleMessage(Message msg) {
+            onHandleIntent((Intent)msg.obj);
+            stopSelf(msg.arg1);
+        }
+    }
+
+    @Override
+    public void onCreate() {
+        super.onCreate();
+        HandlerThread thread = new HandlerThread("IntentService[" + mName + "]");
+        thread.start();
+
+        mServiceLooper = thread.getLooper();
+        mServiceHandler = new ServiceHandler(mServiceLooper);
+    }
+
+    @Override
+    public void onStart(@Nullable Intent intent, int startId) {
+        Message msg = mServiceHandler.obtainMessage();
+        msg.arg1 = startId;
+        msg.obj = intent;
+        mServiceHandler.sendMessage(msg);
+    }
+}
+```
+
+简单理一下：
+
+1. 首先IntentService是一个Service
+2. 并且内部维护了一个HandlerThread，也就是有完整的Looper在运行
+3. 还维护了一个Handler，用于在子线程中执行handleMessage
+4. 启动Service后，会通过Handler执行onHandleIntent方法
+5. 完成任务后，会自动执行stopSelf停止当前Service
+
 ### 如果MessageQueue里面没有Message，那么Looper会阻塞，相当于主线程阻塞，那么点击事件是怎么传入到主线程的呢？
 
 ### 如果MessageQueue里面没有Message，那么Looper会阻塞，相当于主线程阻塞，那么广播事件怎么传入主线程？
@@ -962,3 +1232,6 @@ val handler2 = Handler(object : Handler.Callback {
 - 我读过的最好的epoll讲解--转自”知乎“  https://blog.51cto.com/yaocoder/888374
 - https://www.zhihu.com/question/34652589
 - TODO https://juejin.cn/post/6950146347731255327
+- https://juejin.cn/post/6844903613865672718
+- https://blog.csdn.net/wangsf1112/article/details/106027564
+- https://juejin.cn/post/6844903713006419975
