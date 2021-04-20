@@ -1220,6 +1220,151 @@ public abstract class IntentService extends Service {
 4. 启动Service后，会通过Handler执行onHandleIntent方法
 5. 完成任务后，会自动执行stopSelf停止当前Service
 
+所以，这就是一个无需自己手动管理子线程执行耗时任务的Service，我们只需要将耗时任务在onHandleIntent里面执行就可以了，执行完了它会自动停止Service。
+
+### BlockCanary的原理
+
+[BlockCanary](https://github.com/markzhai/AndroidPerformanceMonitor)是一个用来检测应用卡顿耗时的三方库。
+
+用户感知到应用卡顿，说明View的绘制没有跟上60fps的步伐。当VSYNC信号每隔16ms到来时，没有即时进行绘制，或者是绘制时间超过16ms，都可能导致卡顿。造成这个的原因是因为主线程卡顿了，可能是某个地方在进行耗时操作，或者View布局过于复杂从而需要很长的绘制时间才能绘制完成。
+
+而主线程的卡顿，其实是可以通过检测Handler处理消息的时间长短来感知。有没有发现，只要是和用户感知相关的，比如点击、触摸、View动画、界面跳转、Activity生命周期等等，都是和主线程Looper有关，这些机制全部都靠着Handler消息机制才能运转。这些事件都是发生在事件分发的过程中，也就是消息事件的dispatchMessage()过程中，只要知道dispatchMessage()的耗时就能知道主线程是否在卡顿。如果在卡顿就把线程堆栈拿出来分析。
+
+那么Handler消息的处理时间怎么获取呢？去loop方法看看
+
+```java
+//Looper.java
+private Printer mLogging;
+public void setMessageLogging(@Nullable Printer printer) {
+    mLogging = printer;
+}
+
+public static void loop() {
+    final Looper me = myLooper();
+    for (;;) {
+        final Printer logging = me.mLogging;
+        if (logging != null) {
+            logging.println(">>>>> Dispatching to " + msg.target + " " +
+                    msg.callback + ": " + msg.what);
+        }
+        ...
+        msg.target.dispatchMessage(msg);
+        ...
+        if (logging != null) {
+            logging.println("<<<<< Finished to " + msg.target + " " + msg.callback);
+        }
+    }
+}
+```
+
+从这段代码可以看出，如果我们设置了Printer，那么在每个消息分发的前后都会打印一句日志来标识事件分发的开始和结束。这个点可以利用一下，我们可以通过Looper打印日志的时间间隔来判断是否发生卡顿，如果发生卡顿，则将此时线程的堆栈信息给保存下来，进而分析哪里卡顿了。这种匹配字符串方案能够准确地在发生卡顿时拿到堆栈信息。
+
+原理搞清楚了，咱直接撸一个工具出来：
+
+```java
+const val TAG = "looper_monitor"
+
+/**
+ * 默认卡顿阈值
+ */
+const val DEFAULT_BLOCK_THRESHOLD_MILLIS = 3000L
+const val BEGIN_TAG = ">>>>> Dispatching"
+const val END_TAG = "<<<<< Finished"
+
+class LooperPrinter : Printer {
+
+    private var mBeginTime = 0L
+
+    @Volatile
+    var mHasEnd = false
+    private val collectRunnable by lazy { CollectRunnable() }
+    private val handlerThreadWrapper by lazy { HandlerThreadWrapper() }
+
+    override fun println(msg: String?) {
+        if (msg.isNullOrEmpty()) {
+            return
+        }
+        log(TAG, "$msg")
+        if (msg.startsWith(BEGIN_TAG)) {
+            mBeginTime = System.currentTimeMillis()
+            mHasEnd = false
+
+            //需要单独搞个线程来获取堆栈
+            handlerThreadWrapper.handler.postDelayed(
+                collectRunnable,
+                DEFAULT_BLOCK_THRESHOLD_MILLIS
+            )
+        } else {
+            mHasEnd = true
+            if (System.currentTimeMillis() - mBeginTime < DEFAULT_BLOCK_THRESHOLD_MILLIS) {
+                handlerThreadWrapper.handler.removeCallbacks(collectRunnable)
+            }
+        }
+    }
+
+    fun getMainThreadStackTrace(): String {
+        val stackTrace = Looper.getMainLooper().thread.stackTrace
+        return StringBuilder().apply {
+            for (stackTraceElement in stackTrace) {
+                append(stackTraceElement.toString())
+                append("\n")
+            }
+        }.toString()
+    }
+
+    inner class CollectRunnable : Runnable {
+        override fun run() {
+            if (!mHasEnd) {
+                //主线程堆栈给拿出来，打印一下
+                log(TAG, getMainThreadStackTrace())
+            }
+        }
+    }
+
+    class HandlerThreadWrapper {
+        var handler: Handler
+        init {
+            val handlerThread = HandlerThread("LooperHandlerThread")
+            handlerThread.start()
+            handler = Handler(handlerThread.looper)
+        }
+    }
+
+}
+```
+
+代码比较少，主要思路就是在println()回调时判断回调的文本信息是开始还是结束。如果是开始则搞个定时器，3秒后就认为是卡顿，就开始取主线程堆栈信息输出日志，如果在这3秒内消息已经分发完成，那么就不是卡顿，就把这个定时器取消掉。
+
+我在demo中搞了个点击事件，sleep了4秒
+
+```log
+17987-17987/com.xfhy.allinone D/looper_monitor: >>>>> Dispatching to Handler (android.view.ViewRootImpl$ViewRootHandler) {63ca49} android.view.View$PerformClick@13f525a: 0
+17987-18042/com.xfhy.allinone D/looper_monitor: java.lang.Thread.sleep(Native Method)
+    java.lang.Thread.sleep(Thread.java:373)
+    java.lang.Thread.sleep(Thread.java:314)
+    com.xfhy.allinone.performance.caton.CatonDetectionActivity.manufacturingCaton(CatonDetectionActivity.kt:39)
+    com.xfhy.allinone.performance.caton.CatonDetectionActivity.access$manufacturingCaton(CatonDetectionActivity.kt:14)
+    com.xfhy.allinone.performance.caton.CatonDetectionActivity$onCreate$3.onClick(CatonDetectionActivity.kt:34)
+    android.view.View.performClick(View.java:6597)
+    android.view.View.performClickInternal(View.java:6574)
+    android.view.View.access$3100(View.java:778)
+    android.view.View$PerformClick.run(View.java:25885)
+    android.os.Handler.handleCallback(Handler.java:873)
+    android.os.Handler.dispatchMessage(Handler.java:99)
+    android.os.Looper.loop(Looper.java:193)
+    android.app.ActivityThread.main(ActivityThread.java:6669)
+    java.lang.reflect.Method.invoke(Native Method)
+    com.android.internal.os.RuntimeInit$MethodAndArgsCaller.run(RuntimeInit.java:493)
+    com.android.internal.os.ZygoteInit.main(ZygoteInit.java:858)
+17987-17987/com.xfhy.allinone D/looper_monitor: <<<<< Finished to Handler (android.view.ViewRootImpl$ViewRootHandler) {63ca49} android.view.View$PerformClick@13f525a
+```
+
+可以看到，我们已经获取到了卡顿时的堆栈信息，从这些信息已经足以分析出在哪里发生了什么事情。这里是在CatonDetectionActivity的manufacturingCaton处sleep()了。
+
+### Handler内存泄露问题
+
+Handler内存泄露的原因：非静态内部类生命周期比外部类生命周期长。非静态内部类持有了外部类的引用，也就是Handler持有了Activity的引用,而这个Handler没有即时得到回收，引用链如下：`主线程 —> threadlocal —> Looper —> MessageQueue —> Message —> Handler —> Activity`，于是发生内存泄露。
+
 ### 如果MessageQueue里面没有Message，那么Looper会阻塞，相当于主线程阻塞，那么点击事件是怎么传入到主线程的呢？
 
 ### 如果MessageQueue里面没有Message，那么Looper会阻塞，相当于主线程阻塞，那么广播事件怎么传入主线程？
