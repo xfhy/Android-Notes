@@ -1365,6 +1365,60 @@ class LooperPrinter : Printer {
 
 Handler内存泄露的原因：非静态内部类生命周期比外部类生命周期长。非静态内部类持有了外部类的引用，也就是Handler持有了Activity的引用,而这个Handler没有即时得到回收，引用链如下：`主线程 —> threadlocal —> Looper —> MessageQueue —> Message —> Handler —> Activity`，于是发生内存泄露。
 
+### 利用Handler机制设计一个不崩溃的App？
+
+主线程崩溃，其实都是发生在消息的处理内，包括生命周期、界面绘制等。
+
+所以如果我们能控制这个过程，并且在发生崩溃后重新开启消息循环，那么主线程就能继续运行。
+
+```java
+new Handler(Looper.getMainLooper()).post(new Runnable() {
+    @Override
+    public void run() {
+        while (true) {
+            try {
+                Looper.loop();
+            } catch (Throwable e) {
+                e.printStackTrace();
+            }
+        }
+    }
+});
+```
+
+上面这段代码给主线的Looper发生了一个消息，这个消息的callback是上面这个Runnable，实际执行逻辑是一段看起来像死循环一样的代码。这样就能让主线程不崩溃了？
+
+分析一下，我们知道，主线程中维护了Handler的消息机制，在应用启动的时候就做好了Looper的创建和初始化，然后开始使用Looper.loop（）循环处理消息。
+
+```java
+//ActivityThread.java
+public static void main(String[] args) {
+    //准备主线的MainLooper
+    Looper.prepareMainLooper();
+
+    ActivityThread thread = new ActivityThread();
+    thread.attach(false, startSeq);
+
+    if (sMainThreadHandler == null) {
+        sMainThreadHandler = thread.getHandler();
+    }
+
+    //开始loop循环
+    Looper.loop();
+
+    //loop循环是不能结束的，否则app就会异常退出咯
+    throw new RuntimeException("Main thread loop unexpectedly exited");
+}
+```
+
+我们在使用app的过程中，用户的所有操作事件、生命周期回调、列表滑动等等，都是通过Looper的loop循环中完成处理的，其本质是将消息加入MessageQueue队列，然后循环从这个队列中取出消息并处理。如果没有消息可以处理的时候，会依靠Linux的epoll机制暂时挂起等待唤醒。
+
+死循环，不断取消息，没有消息的话就暂时挂起。我们上面那段短小精炼的代码，通过Handler往主线程的Looper发送了一个消息，然后在里面执行了一个死循环，死循环地指向Looper的loop方法读取消息。只要Looper的loop方法执行到了咱这个Message的callback，那么后面所有的主线程消息都会走到我们这个loop方法中进行处理。一旦发生了主线程崩溃，那么这里就可以进行异常捕获到。然后又是死循环，捕获到异常之后，又开始继续执行Looper的loop方法，这样主线程就可以一直正常读取消息，刷新UI啥的都是正常的，不会有影响。
+
+但是上面那段代码只能捕获主线程的崩溃，那子线程的崩溃还是会让app崩溃。可以通过设置setDefaultUncaughtExceptionHandler来化解。
+
+todo xfhy 
+
 ### 如果MessageQueue里面没有Message，那么Looper会阻塞，相当于主线程阻塞，那么点击事件是怎么传入到主线程的呢？
 
 ### 如果MessageQueue里面没有Message，那么Looper会阻塞，相当于主线程阻塞，那么广播事件怎么传入主线程？
@@ -1380,3 +1434,4 @@ Handler内存泄露的原因：非静态内部类生命周期比外部类生命�
 - https://juejin.cn/post/6844903613865672718
 - https://blog.csdn.net/wangsf1112/article/details/106027564
 - https://juejin.cn/post/6844903713006419975
+- https://juejin.cn/post/6904283635856179214
