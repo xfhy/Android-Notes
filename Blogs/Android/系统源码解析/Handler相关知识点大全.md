@@ -1,5 +1,44 @@
+Handler相关知识点大全
+---
+#### 目录
+- [1. Handler被设计出来的原因？有什么用？](#head1)
+- [2. 为什么建议子线程不访问（更新）UI？](#head2)
+- [3. 子线程访问Ui的崩溃原因和解决办法？](#head3)
+- [4. MessageQueue是干什么的？用的什么数据结构来存储数据？](#head4)
+- [5. 延迟消息是怎么实现的？](#head5)
+- [6. MessageQueue的消息怎么被取出来的？](#head6)
+- [7. MessageQueue没有消息时会怎样？阻塞之后怎么唤醒？说说pipe/epoll机制？](#head7)
+- [8. 同步屏障和异步消息是怎么实现的？](#head8)
+- [9. 同步屏障和异步消息有具体的使用场景吗？](#head9)
+- [10. Message消息被分发之后会怎么处理？消息怎么复用的？](#head10)
+- [11. Looper是干什么的？怎么获取当前线程的Looper？为什么不直接用Map存储线程和对象呢？](#head11)
+- [12. ThreadLocal运行机制？这种机制设计的好处？](#head12)
+- [13. 还有哪些地方运用到了ThreadLocal机制？](#head13)
+- [14. 可以多次创建Looper吗？](#head14)
+- [15. Looper中的quitAllowed字段是什么？](#head15)
+- [16. Looper.loop方法是死循环，为什么不会卡死？（ANR）](#head16)
+	- [(1) Android中为什么主线程不会因为Looper.loop()里的死循环卡死？](#head17)
+	- [(2) 没看到哪里有相关代码为这个死循环准备了一个新线程去运转？](#head18)
+	- [(3) Activity的生命周期是怎么实现在死循环体外能够执行起来的？](#head19)
+- [17. Message是怎么找到它所属的Handler然后进行分发的？](#head20)
+- [18. Handler的post(Runnable)与sendMessage有什么区别？](#head21)
+- [19. Handler.Callback.handleMessage和Handler.handleMessage有什么不一样？为什么这样设计？](#head22)
+- [20. Handler、Looper、MessageQueue、线程是一一对应关系吗？](#head23)
+- [21. ActivityThread中做了哪些关于Handler的工作？（为什么主线程不需要单独创建Looper）](#head24)
+- [22. IdleHandler是啥？有什么使用场景？](#head25)
+- [23. HandlerThread是啥？有什么使用场景？](#head26)
+- [24. IntentService是啥？有什么使用场景？](#head27)
+- [25. BlockCanary的原理](#head28)
+- [26. Handler内存泄露问题](#head29)
+- [27. 利用Handler机制设计一个不崩溃的App？](#head30)
+	- [setDefaultUncaughtExceptionHandler](#head31)
+	- [直接在生命周期回调里面抛异常](#head32)
+	- [小结](#head33)
+- [总结](#head34)
 
-### 1.Handler被设计出来的原因？有什么用？
+---
+
+### <span id="head1">1. Handler被设计出来的原因？有什么用？</span>
 
 一种东西被设计出来肯定就有它存在的意义，Handler的意义就是切换线程。
 
@@ -8,7 +47,7 @@
 - 不管在什么线程中往Handler发消息，最终处理消息的代码都会在你创建Handler实例的线程中运行；一般是拿来子线程做耗时操作，然后发消息到主线程去更新UI；
 - 延迟执行 or 定时执行
 
-### 2.为什么建议子线程不访问（更新）UI？
+### <span id="head2">2. 为什么建议子线程不访问（更新）UI？</span>
 
 Android中的UI空间不是线程安全的，如果多线程访问UI控件就乱套了。
 
@@ -19,7 +58,7 @@ Android中的UI空间不是线程安全的，如果多线程访问UI控件就乱
 
 所以Android设计出了**单线程模型**来处理UI操作，再搭配上Handler，是一个比较合适的解决方案。
 
-### 3.子线程访问Ui的崩溃原因和解决办法？
+### <span id="head3">3. 子线程访问Ui的崩溃原因和解决办法？</span>
 
 崩溃发生在ViewRootImpl的checkThread方法中：
 
@@ -56,7 +95,7 @@ ViewRootImpl创建流程：`ActivityThread#handleResumeActivity()->WindowManager
 2. 在ViewRootImpl创建之前进行子线程的UI更新，比如onCreate方法中子线程更新UI
 3. 子线程切换到主线程进行UI更新，比如Handler、View.post方法
 
-### 4. MessageQueue是干什么的？用的什么数据结构来存储数据？
+### <span id="head4">4. MessageQueue是干什么的？用的什么数据结构来存储数据？</span>
 
 看名字应该是个队列结构，队列的特点是先进先出，一般在队尾增加数据，在队首进行取数据或者删除数据。Handler中的消息比较特殊，可能有一种特殊情况，比如延时消息，消息屏幕，所以不一定是从队首开始取数据。所以Android中采用了链表的形式来实现这个队列，方便数据的插入。
 
@@ -124,7 +163,7 @@ boolean enqueueMessage(Message msg, long when) {
 
 所以，MessageQueue是一个用于存储消息、用链表实现的特殊队列结构。
 
-### 5. 延迟消息是怎么实现的？
+### <span id="head5">5. 延迟消息是怎么实现的？</span>
 
 在第4节我们提到，MessageQueue是按照Message触发时间的先后顺序排列的，队头的消息是将要最早触发的消息。排在越前面的越早触发，这个所谓的延时呢，不是延时发送消息，而是延时去处理消息，我们在发消息时都是马上插入到消息队列当中。
 
@@ -214,7 +253,7 @@ int Looper::pollInner(int timeoutMillis) {
 
 从native层可以看到是利用linux的epoll机制，调用了`epoll_wait`函数来实现的阻塞，**设置`epoll_wait`的超时时间，使其在特定时间唤醒**。这里我们先计算当前时间和触发时间的差值，这个差值作为`epoll_wait`的超时时间，`epoll_wait`超时的时候就是消息触发的时候了，就不会继续阻塞，继续往下执行，这个线程就会被唤醒，去执行消息处理。
 
-### 6. MessageQueue的消息怎么被取出来的？
+### <span id="head6">6. MessageQueue的消息怎么被取出来的？</span>
 
 消息的取出，即MessageQueue的next方法，第5节中已经分析next方法了。但有个问题，为什么取消息也是用的死循环？其实死循环就是为了保证一定要返回一条消息，如果没有可用消息，那么就阻塞在这里，一直到有新消息的到来。
 
@@ -243,7 +282,7 @@ if (msg != null) {
 
 -1就代表一直阻塞。
 
-### MessageQueue没有消息时会怎样？阻塞之后怎么唤醒？说说pipe/epoll机制？
+### <span id="head7">7. MessageQueue没有消息时会怎样？阻塞之后怎么唤醒？说说pipe/epoll机制？</span>
 
 接着上文的逻辑，当消息不可用或者没有消息的时候就会阻塞在next方法，而**阻塞的方法是通过pipe（管道）和epoll机制**（有了这个机制，Looper的死循环就不会导致CPU使用率过高）。
 
@@ -329,7 +368,7 @@ boolean enqueueMessage(Message msg, long when) {
 
 最后根据needWake的值，决定是否调用nativeWake方法唤醒next()方法。
 
-### 同步屏障和异步消息是怎么实现的？
+### <span id="head8">8. 同步屏障和异步消息是怎么实现的？</span>
 
 在Handler机制中，有3种消息类型：
 
@@ -355,7 +394,7 @@ if (msg != null && msg.target == null) {
 
 也就是说同步屏障消息不会被返回，它只是一个标志，一个工具，遇到它就代表要先行处理异步消息了。所以同步屏障和异步消息的存在意义就是让有些消息可以被“**加急处理**”。比如屏幕绘制。
 
-### 同步屏障和异步消息有具体的使用场景吗？
+### <span id="head9">9. 同步屏障和异步消息有具体的使用场景吗？</span>
 
 **一个经典的场景是保证VSync信号到来后立即执行绘制，而不是要等前面的同步消息**。
 
@@ -425,7 +464,7 @@ private final class FrameDisplayEventReceiver extends DisplayEventReceiver
 
 Choreographer的相关知识点特别多，这里就不展开讲了，可以看我之前的文章：[Choreographer原理及应用](https://github.com/xfhy/Android-Notes)
 
-### Message消息被分发之后会怎么处理？消息怎么复用的？
+### <span id="head10">10. Message消息被分发之后会怎么处理？消息怎么复用的？</span>
 
 再看看loop方法，在消息分发之后，也就是执行了dispatchMessage方法之后，还偷偷做了一个操作-recycleUnchecked
 
@@ -490,7 +529,7 @@ public static Message obtain() {
 ```
 直接复用消息池中的第一条消息，然后sPool指向下一个节点，消息池数量减一。
 
-### Looper是干什么的？怎么获取当前线程的Looper？为什么不直接用Map存储线程和对象呢？
+### <span id="head11">11. Looper是干什么的？怎么获取当前线程的Looper？为什么不直接用Map存储线程和对象呢？</span>
 
 在Handler发送消息之后，消息就被存储到MessageQueue中，而Looper就是一个管理消息队列的角色。Looper会从MessageQueue中不断的获取消息（可能会阻塞），也就是loop方法，并将消息交回给Handler进行处理。
 
@@ -516,7 +555,7 @@ public static @Nullable Looper myLooper() {
 
 通过prepare方法创建Looper并且加入到sThreadLocal中，通过myLooper方法从sThreadLocal中获取Looper。
 
-### ThreadLocal运行机制？这种机制设计的好处？
+### <span id="head12">12. ThreadLocal运行机制？这种机制设计的好处？</span>
 
 先看一下ThreadLocal源码：
 ```java
@@ -576,7 +615,7 @@ ThreadLocal.ThreadLocalMap threadLocals = null;
 
 这样做的好处是什么？为什么不直接用Map存储线程和对象呢？一个Map存储所有线程和对象，不好的地方就在于会很混乱，每个线程之间有了联系，也容易造成内存泄露。最好是把数据交给线程内部管理，不用关心多线程安全问题，操作也比较简单，解耦。
 
-### 还有哪些地方运用到了ThreadLocal机制？
+### <span id="head13">13. 还有哪些地方运用到了ThreadLocal机制？</span>
 
 Choreographer
 
@@ -605,7 +644,7 @@ public final class Choreographer {
 
 Choreographer主要是主线程用的，用来配合VSYNC中断信号。这里使用Choreographer更多的意义在于完成线程单例的功能。
 
-### 可以多次创建Looper吗？
+### <span id="head14">14. 可以多次创建Looper吗？</span>
 
 Looper的创建是通过Looper.prepare()方法实现的，而在prepare方法中就判断了，当前线程是否存在Looper对象，如果有，就会直接抛出异常。
 
@@ -625,7 +664,7 @@ private Looper(boolean quitAllowed) {
 
 所以同一个线程，只能创建一个Looper，多次创建会报错。
 
-### Looper中的quitAllowed字段是什么？
+### <span id="head15">15. Looper中的quitAllowed字段是什么？</span>
 
 从字面意思看：是否允许退出。看看在哪些地方用到了
 
@@ -771,7 +810,7 @@ public static void loop() {
 
 这个quit方法一般是什么时候使用呢？不再需要消息循环的时候。比如在子线程中初始化了Looper并开启了loop循环，则可以在线程结束时退出loop。
 
-### Looper.loop方法是死循环，为什么不会卡死？（ANR）
+### <span id="head16">16. Looper.loop方法是死循环，为什么不会卡死？（ANR）</span>
 
 关于这个问题，Gityuan曾经回答过，[知乎原文 Android中为什么主线程不会因为Looper.loop()里的死循环卡死？](https://www.zhihu.com/question/34652589)
 
@@ -784,7 +823,7 @@ public static void loop() {
 
 下面是Gityuan的原回答（防止这么好的资料掉了，copy过来）：
 
-#### (1) Android中为什么主线程不会因为Looper.loop()里的死循环卡死？
+#### <span id="head17">(1) Android中为什么主线程不会因为Looper.loop()里的死循环卡死？</span>
 
 这里涉及线程，先说说进程/线程，进程：每个App运行前首先创建一个进程，该进程是由Zygote fork出来的，用于承载App上运行的各种Activity/Service等组件。进程对于上层应用来说是完全透明的，这也是Google有意为之，让App程序都是运行在Android Runtime。大多数情况下App就运行在一个进程中，除非在AndroidManifest.xml中配置android:process属性或通过native代码fork进程。
 
@@ -796,7 +835,7 @@ public static void loop() {
 
 真正会卡死主线程的操作是在回调方法onCreate/onStart/onResume等操作时间过长，会导致掉帧，甚至发生ANR，Looper.loop本身不会导致应用卡死。
 
-#### (2) 没看到哪里有相关代码为这个死循环准备了一个新线程去运转？
+#### <span id="head18">(2) 没看到哪里有相关代码为这个死循环准备了一个新线程去运转？</span>
 
 事实上，会在进入死循环之前便创建了新binder线程，在代码ActivityThread.main()中
 
@@ -826,7 +865,7 @@ public static void main(String[] args) {
 
 **主线程的死循环一直运行是不是特别消耗CPU资源呢？** 其实不然，这里就涉及到**Linux pipe/epoll机制**，简单说就是在主线程的MessageQueue没有消息时，便阻塞在loop的queue.next()中的nativePollOnce()方法里，详情见[Android消息机制1-Handler（Java层）](http://gityuan.com/2015/12/26/handler-message-framework/),此时主线程会释放CPU资源进入休眠状态，直到下个消息到达或者有事务发生，通过往pipe管道写端写入数据来唤醒主线程工作。这里采用的epoll机制，是一种IO多路复用机制，可以同时监控多个描述符，当某个描述符就绪（读或写就绪），则立即通知相应程序进行读或写操作，本质同步I/O，即读写是阻塞的。所以说，**主线程大多数时候都是出于休眠状态，并不会消耗大量CPU资源**。
 
-#### (3) Activity的生命周期是怎么实现在死循环体外能够执行起来的？
+#### <span id="head19">(3) Activity的生命周期是怎么实现在死循环体外能够执行起来的？</span>
 
 ActivityThread的内部类H继承于Handler，通过Handler消息机制，简单说Handler机制用于同一个进程的线程间通信。
 
@@ -851,7 +890,7 @@ Binder用于不同进程之间通信，由一个进程的Binder客户端向另�
 3. 线程4通过Handler消息机制，将暂停Activity的消息发送给主线程
 4. 主线程在Looper.loop()中循环遍历消息，当收到暂停Activity的消息时，便将消息分发给ActivityThread.H.handleMessage()方法，再经过方法的调用，最后便会调用到Activity.onPause()，当onPause()处理完后，继续循环loop下去。
 
-### Message是怎么找到它所属的Handler然后进行分发的？
+### <span id="head20">17. Message是怎么找到它所属的Handler然后进行分发的？</span>
 
 在loop方法中，找到要处理的Message，然后调用了这么一句代码处理消息：
 
@@ -871,7 +910,7 @@ private boolean enqueueMessage(MessageQueue queue,Message msg,long uptimeMillis)
 ```
 在使用Handler发送消息的时候，会设置msg.target=this，所以target就是当初把消息加到消息队列的那个Handler。
 
-### Handler的post(Runnable)与sendMessage有什么区别？
+### <span id="head21">18. Handler的post(Runnable)与sendMessage有什么区别？</span>
 
 Handler中主要的发送消息可以分为两种：
 - post(Runnable)
@@ -922,7 +961,7 @@ private static void handleCallback(Message message) {
 
 所以post(Runnable)与sendMessage的区别就在于后续消息的处理方式，是交给msg.callback或者Handler.handleMessage。还有一种情况是交给Handler.Callback处理，这个Handler自己的Callback是可以通过构造方法传入的。
 
-### Handler.Callback.handleMessage和Handler.handleMessage有什么不一样？为什么这样设计？
+### <span id="head22">19. Handler.Callback.handleMessage和Handler.handleMessage有什么不一样？为什么这样设计？</span>
 
 接着上面的diamante说，这两个处理方法的区别在于Handler.Callback.handleMessage方法的返回值决定着是否需要再继续执行Handler.handleMessage
 
@@ -950,7 +989,7 @@ val handler2 = Handler(object : Handler.Callback {
 
 而第2种就是系统给我们提供了一种不需要派生子类的使用方法，只需要传入一个callback即可。第2种方式的场景：插件化，hook ActivityThread.H的callback，用自定义的Callback替换H中的mCallback，从而可以感知startActivity启动，进而进行Intent替换等一系列骚操作。
 
-### Handler、Looper、MessageQueue、线程是一一对应关系吗？
+### <span id="head23">20. Handler、Looper、MessageQueue、线程是一一对应关系吗？</span>
 
 - 一个线程最多只会存在一个Looper对象，所以线程和Looper是一一对应的
 - MessageQueue对象是在new Looper的时候创建的，所以Looper和MessageQueue是一一对应的
@@ -958,7 +997,7 @@ val handler2 = Handler(object : Handler.Callback {
 
 总结：Looper、MessageQueue、线程是一一对应关系，而它们与Handler是可以一对多的。
 
-### ActivityThread中做了哪些关于Handler的工作？（为什么主线程不需要单独创建Looper）
+### <span id="head24">21. ActivityThread中做了哪些关于Handler的工作？（为什么主线程不需要单独创建Looper）</span>
 
 主要做了两件事：
 
@@ -994,7 +1033,7 @@ class H extends Handler {
 }
 ```
 
-### IdleHandler是啥？有什么使用场景？
+### <span id="head25">22. IdleHandler是啥？有什么使用场景？</span>
 
 IdleHandler可以对启动过程进行优化，它可以在主线程空闲时执行任务，而不影响其他任务的执行。比如在空闲的时候再开启常驻通知栏，也是ok的。
 
@@ -1100,7 +1139,7 @@ public void addIdleHandler(@NonNull IdleHandler handler) {
 - [Android 避坑指南：实际经历来说说IdleHandler的坑](https://mp.weixin.qq.com/s/dh_71i8J5ShpgxgWN5SPEw)
 - [View动画Animation运行原理解析](https://www.cnblogs.com/dasusu/p/8287822.html)
 
-### HandlerThread是啥？有什么使用场景？
+### <span id="head26">23. HandlerThread是啥？有什么使用场景？</span>
 
 直接看源码：
 
@@ -1172,7 +1211,7 @@ public Looper getLooper() {
 
 在获取Looper的时候，可能会阻塞住，可能Looper还没有初始化完成。所以wait的意思就是等待Looper创建好，那边创建好之后再通知这边正确返回Looper。
 
-### IntentService是啥？有什么使用场景？
+### <span id="head27">24. IntentService是啥？有什么使用场景？</span>
 
 直接上源码：
 
@@ -1222,7 +1261,7 @@ public abstract class IntentService extends Service {
 
 所以，这就是一个无需自己手动管理子线程执行耗时任务的Service，我们只需要将耗时任务在onHandleIntent里面执行就可以了，执行完了它会自动停止Service。
 
-### BlockCanary的原理
+### <span id="head28">25. BlockCanary的原理</span>
 
 [BlockCanary](https://github.com/markzhai/AndroidPerformanceMonitor)是一个用来检测应用卡顿耗时的三方库。
 
@@ -1361,11 +1400,11 @@ class LooperPrinter : Printer {
 
 可以看到，我们已经获取到了卡顿时的堆栈信息，从这些信息已经足以分析出在哪里发生了什么事情。这里是在CatonDetectionActivity的manufacturingCaton处sleep()了。
 
-### Handler内存泄露问题
+### <span id="head29">26. Handler内存泄露问题</span>
 
 Handler内存泄露的原因：非静态内部类生命周期比外部类生命周期长。非静态内部类持有了外部类的引用，也就是Handler持有了Activity的引用,而这个Handler没有即时得到回收，引用链如下：`主线程 —> threadlocal —> Looper —> MessageQueue —> Message —> Handler —> Activity`，于是发生内存泄露。
 
-### 利用Handler机制设计一个不崩溃的App？
+### <span id="head30">27. 利用Handler机制设计一个不崩溃的App？</span>
 
 主线程崩溃，其实都是发生在消息的处理内，包括生命周期、界面绘制等。
 
@@ -1417,20 +1456,298 @@ public static void main(String[] args) {
 
 但是上面那段代码只能捕获主线程的崩溃，那子线程的崩溃还是会让app崩溃。可以通过设置setDefaultUncaughtExceptionHandler来化解。
 
-todo xfhy 
+#### <span id="head31">setDefaultUncaughtExceptionHandler</span>
 
-### 如果MessageQueue里面没有Message，那么Looper会阻塞，相当于主线程阻塞，那么点击事件是怎么传入到主线程的呢？
+为什么设置了setDefaultUncaughtExceptionHandler就不崩溃了？这里我们得从异常的源码开始说起：一般情况下，一个应用所使用的线程都是在同一个线程组，而在这个线程组里只要有一个线程出现未被捕获异常的时候，Java虚拟机就会调用当前线程所在线程组的uncaughtException()方法。
 
-### 如果MessageQueue里面没有Message，那么Looper会阻塞，相当于主线程阻塞，那么广播事件怎么传入主线程？
+```java
+// ThreadGroup.java
+private final ThreadGroup parent;
 
-### 参考资料
+public void uncaughtException(Thread t, Throwable e) {
+    if (parent != null) {
+        //递归
+        parent.uncaughtException(t, e);
+    } else {
+        //获取DefaultUncaughtExceptionHandler
+        Thread.UncaughtExceptionHandler ueh =
+            Thread.getDefaultUncaughtExceptionHandler();
+        if (ueh != null) {
+            ueh.uncaughtException(t, e);
+        } else if (!(e instanceof ThreadDeath)) {
+            System.err.print("Exception in thread \""
+                             + t.getName() + "\" ");
+            e.printStackTrace(System.err);
+        }
+    }
+}
+```
+
+parent表示当前线程组的父级线程组，所以最后还是会调用到这个方法中。接着看后面的代码，通过getDefaultUncaughtExceptionHandler获取到了系统默认的异常处理器，然后调用了uncaughtException方法。那么我们去找找本来系统中的这个异常处理器--UncaughtExceptionHandler。
+
+这就要从App的启动流程说起了，所有的Android进程都是由Zygote进程fork而来的，在一个新进程被启动的时候就会调用zygoteInit方法，这个方法里会进行一些应用的初始化工作：
+
+```java
+//ZygoteInit.java
+public static final Runnable zygoteInit(int targetSdkVersion, String[] argv, ClassLoader classLoader) {
+    if (RuntimeInit.DEBUG) {
+        Slog.d(RuntimeInit.TAG, "RuntimeInit: Starting application from zygote");
+    }
+
+    Trace.traceBegin(Trace.TRACE_TAG_ACTIVITY_MANAGER, "ZygoteInit");
+    //日志重定向
+    RuntimeInit.redirectLogStreams();
+    //通用的配置初始化  
+    RuntimeInit.commonInit();
+    // zygote初始化
+    ZygoteInit.nativeZygoteInit();
+    //应用相关初始化
+    return RuntimeInit.applicationInit(targetSdkVersion, argv, classLoader);
+}
+```
+
+而关于异常处理器，就在这个通用的配置初始化方法当中：
+
+```java
+//RuntimeInit.java
+protected static final void commonInit() {
+
+   //设置异常处理器
+    LoggingHandler loggingHandler = new LoggingHandler();
+    Thread.setUncaughtExceptionPreHandler(loggingHandler);
+    //注意 这里设置了UncaughtExceptionHandler，它是KillApplicationHandler
+    //看起来KillApplicationHandler里面是kill app
+    Thread.setDefaultUncaughtExceptionHandler(new KillApplicationHandler(loggingHandler));
+
+    //设置时区
+    TimezoneGetter.setInstance(new TimezoneGetter() {
+        @Override
+        public String getId() {
+            return SystemProperties.get("persist.sys.timezone");
+        }
+    });
+    TimeZone.setDefault(null);
+
+    //log配置
+    LogManager.getLogManager().reset();
+    //***    
+
+    initialized = true;
+}
+```
+
+这里系统给我们设置了应用默认的异常处理器--KillApplicationHandler
+
+```java
+//KillApplicationHandler.java
+private static class KillApplicationHandler implements Thread.UncaughtExceptionHandler {
+        private final LoggingHandler mLoggingHandler;
+
+        
+        public KillApplicationHandler(LoggingHandler loggingHandler) {
+            this.mLoggingHandler = Objects.requireNonNull(loggingHandler);
+        }
+
+        @Override
+        public void uncaughtException(Thread t, Throwable e) {
+            try {
+                //输出崩溃时的调用栈日志
+                ensureLogging(t, e);
+                //...    
+                // Bring up crash dialog, wait for it to be dismissed
+                //异常处理
+                ActivityManager.getService().handleApplicationCrash(
+                        mApplicationObject, new ApplicationErrorReport.ParcelableCrashInfo(e));
+            } catch (Throwable t2) {
+                if (t2 instanceof DeadObjectException) {
+                    // System process is dead; ignore
+                } else {
+                    try {
+                        Clog_e(TAG, "Error reporting crash", t2);
+                    } catch (Throwable t3) {
+                        // Even Clog_e() fails!  Oh well.
+                    }
+                }
+            } finally {
+                // Try everything to make sure this process goes away.
+                //杀掉进程
+                Process.killProcess(Process.myPid());
+                System.exit(10);
+            }
+        }
+
+        private void ensureLogging(Thread t, Throwable e) {
+            if (!mLoggingHandler.mTriggered) {
+                try {
+                    mLoggingHandler.uncaughtException(t, e);
+                } catch (Throwable loggingThrowable) {
+                    // Ignored.
+                }
+            }
+        }
+
+```
+在uncaughtException回调方法中，会执行一个handleApplicationCrash方法进行异常处理，并且最后都会走到finally中进行进程销毁，所以程序就崩溃了。
+
+我们平时在收集上看到的崩溃提示弹窗，就是在这个handleApplicationCrash方法中弹出来的。不仅仅是Java崩溃，还有我们平时遇到的native_crash、ANR等异常都会最后走到handleApplicationCrash进行崩溃处理。
+
+另外，这里在构造方法中，传入了一个LoggingHandler，它的作用非常大。平时我们看到的崩溃日志就是它打印出来的。
+
+我们如果通过setDefaultUncaughtExceptionHandler方法设置了我们自己的崩溃处理器，就把之前应用设置的这个崩溃处理器给顶掉了，然后我们不做任何处理的话，自然程序就不会崩溃了。
+
+#### <span id="head32">直接在生命周期回调里面抛异常</span>
+
+```java
+class Test2Activity : AppCompatActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_exception)
+
+        throw RuntimeException("主线程异常")
+    }
+}
+```
+
+如果直接在Activity生命周期内抛出异常，会导致界面绘制无法完成，Activity无法被正确启动，就会白嫖或者黑屏。这种严重影响到用户体验的情况还是建议直接杀死App，因为很有可能会对其他的功能模块造成影响。或者如果某些Activity不是很重要，也可以只finish这个Activity。
+
+怎么分辨这种生命周期内发生崩溃的情况？Activity的生命周期都会走ActivityThread的H这个Handler过，直接hook这个Handler的callbak，然后针对每个生命周期对应的消息进行try..catch处理捕获异常，然后就可以进行finishActivity或者杀死进程操作了。
+
+主要代码如下：
+
+```java
+Field mhField = activityThreadClass.getDeclaredField("mH");
+mhField.setAccessible(true);
+final Handler mhHandler = (Handler) mhField.get(activityThread);
+Field callbackField = Handler.class.getDeclaredField("mCallback");
+callbackField.setAccessible(true);
+callbackField.set(mhHandler, new Handler.Callback() {
+    @Override
+    public boolean handleMessage(Message msg) {
+        if (Build.VERSION.SDK_INT >= 28) {
+        //android 28之后的生命周期处理
+            final int EXECUTE_TRANSACTION = 159;
+            if (msg.what == EXECUTE_TRANSACTION) {
+                try {
+                    mhHandler.handleMessage(msg);
+                } catch (Throwable throwable) {
+                    //杀死进程或者杀死Activity
+                }
+                return true;
+            }
+            return false;
+        }
+        
+        //android 28之前的生命周期处理
+        switch (msg.what) {
+            case RESUME_ACTIVITY:
+            //onRestart onStart onResume回调这里
+                try {
+                    mhHandler.handleMessage(msg);
+                } catch (Throwable throwable) {
+                    sActivityKiller.finishResumeActivity(msg);
+                    notifyException(throwable);
+                }
+                return true;
+
+```
+
+代码贴了一部分，但是原理大家应该都懂了吧，就是通过替换主线程的Handler的Callback，进行生命周期的异常捕获。接下来就是就是捕获后的处理工作了。要么杀进程，要么finish那个Activity。
+
+杀死进程比较容易，那么杀死Activity应该怎么玩？我们这里拿不到Activity的实例，怎么finish？这就要分析下Activity的finish流程了，简答说下，以Android 29为例
+
+```java
+//Activity.java
+private void finish(int finishTask) {
+    if (mParent == null) {
+        
+        if (false) Log.v(TAG, "Finishing self: token=" + mToken);
+        try {
+            if (resultData != null) {
+                resultData.prepareToLeaveProcess(this);
+            }
+            if (ActivityTaskManager.getService()
+                    .finishActivity(mToken, resultCode, resultData, finishTask)) {
+                mFinished = true;
+            }
+        } 
+    } 
+
+}
+
+
+@Override
+public final boolean finishActivity(IBinder token, int resultCode, Intent resultData,
+        int finishTask) {
+    return mActivityTaskManager.finishActivity(token, resultCode, resultData, finishTask);
+}    
+```
+
+从Activity的finish源码得知，最终是调用到ActivityTaskManagerService的finishActivity方法，这个方法有4个参数，其中有个用来表示Activity的参数也就是最重要的参数--token。我们只要拿到这个token就能直接调用ActivityTaskManagerService来进行finishActivity。所以取源码里面找找token。
+
+由于我们捕获的地方是在handleMessage回调方法中，只要一个参数Message可以用，那我们就从这方面入手，回到刚才我们处理消息的源码中
+
+```java
+ class H extends Handler {
+        public void handleMessage(Message msg) {
+            switch (msg.what) {
+                case EXECUTE_TRANSACTION: 
+                    final ClientTransaction transaction = (ClientTransaction) msg.obj;
+                    mTransactionExecutor.execute(transaction);
+                    break;              
+            }        
+        }
+    }
+    
+    public void execute(ClientTransaction transaction) {
+        final IBinder token = transaction.getActivityToken();
+        executeCallbacks(transaction);
+        executeLifecycleState(transaction);
+        mPendingActions.clear();
+        log("End resolving transaction");
+    }    
+
+```
+
+可以看到，在源码中，Handler是怎么处理`EXECUTE_TRANSACTION`消息的，获取到msg.obj对象，也就是ClientTransaction类实例，然后调用execute方法，而在execute方法中，就获取到了token。找到了token，我们就可以通过反射进行Activity的销毁就行了。
+
+```java
+private void finishMyCatchActivity(Message message) throws Throwable {
+    ClientTransaction clientTransaction = (ClientTransaction) message.obj;
+    IBinder binder = clientTransaction.getActivityToken();
+   
+   Method getServiceMethod = ActivityManager.class.getDeclaredMethod("getService");
+    Object activityManager = getServiceMethod.invoke(null);
+
+    Method finishActivityMethod = activityManager.getClass().getDeclaredMethod("finishActivity", IBinder.class, int.class, Intent.class, int.class);
+    finishActivityMethod.setAccessible(true);
+    finishActivityMethod.invoke(activityManager, binder, Activity.RESULT_CANCELED, null, 0);
+}
+
+```
+
+上面这种思路就是Cockroach里面的原理。
+
+#### <span id="head33">小结</span>
+
+如何捕获程序中的异常不让App崩溃，主要有以下做法：
+
+- 通过再主线程里面发送一个消息，接管原来的主线程的loop，捕获主线程的异常，并在异常发生后继续调用Looper.loop方法，使得主线程继续处理消息
+- 对于子线程的异常，可以通过Thread.setDefaultUncaughtExceptionHandler来拦截，并且子线程的停止不会给用户带来感知
+- 对于在生命周期内发生的异常，可以通过替换ActivityThread.mH.mCallback的方法来捕获，并且通过token来结束Activity或直接杀死进程。但是这种办法需要适配不同的Android版本，所以慎用，需要的可以看看Cockroach库源码。
+
+### <span id="head34">总结</span>
+
+Handler机制这块知识点非常非常多，希望大家看完这篇文章之后，能形成自己的知识体系。
+
+Hanlder，I Got it！
+
 
 - https://juejin.cn/post/6943048240291905549?utm_source=gold_browser_extension
 - https://blog.csdn.net/qq_38366777/article/details/108942036
 - Android 消息处理以及epoll机制 https://www.jianshu.com/p/97e6e6c981b6
 - 我读过的最好的epoll讲解--转自”知乎“  https://blog.51cto.com/yaocoder/888374
 - https://www.zhihu.com/question/34652589
-- TODO https://juejin.cn/post/6950146347731255327
+- https://juejin.cn/post/6950146347731255327
 - https://juejin.cn/post/6844903613865672718
 - https://blog.csdn.net/wangsf1112/article/details/106027564
 - https://juejin.cn/post/6844903713006419975
