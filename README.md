@@ -101,32 +101,25 @@
 
 ### 三方库原理
 
-- [LeakCanary_原理探究](/Blogs/Android/三方库原理/LeakCanary_原理探究.md)
-- [OkHttp3_原理探究](/Blogs/Android/三方库原理/OkHttp3_原理探究.md)
-- [Retrofit_原理解析](/Blogs/Android/三方库原理/Retrofit_原理解析.md)
+- [LeakCanary 原理探究](/Blogs/Android/三方库原理/LeakCanary_原理探究.md)
+- [OkHttp3 原理探究](/Blogs/Android/三方库原理/OkHttp3_原理探究.md)
+- [Retrofit 原理解析](/Blogs/Android/三方库原理/Retrofit_原理解析.md)
 - [Glide主流程源码解析](/Blogs/Android/三方库原理/Glide主流程源码解析.md)
-- [Android-skin-support换肤原理详解](/Blogs/Android/三方库原理/Android-skin-support换肤原理详解.md)
+- [Android-skin-support 换肤原理详解](/Blogs/Android/三方库原理/Android-skin-support换肤原理详解.md)
 
-### 反编译
+### 实战常见问题
 
-- [Android_反编译基础知识](/Blogs/Android/反编译/Android_反编译基础知识.md)
-- [Android_反编译实战](/Blogs/Android/反编译/Android_反编译实战.md)
+- [APK包体积优化](/Blogs/Android/实战常见问题/APK包体积优化.md)
+- [屏幕适配](/Blogs/Android/实战常见问题/屏幕适配.md)
 
 ### Gradle
 
-- [Gradle系列(一)_Groovy_基础](/Blogs/Android/Gradle/Gradle系列(一)_Groovy_基础.md)
-- [Gradle系列(二)_Gradle执行顺序和task](/Blogs/Android/Gradle/Gradle系列(二)_Gradle执行顺序和task.md)
-- [Gradle系列(三)_Gradle配置构建和渠道包](/Blogs/Android/Gradle/Gradle系列(三)_Gradle配置构建和渠道包.md)
-- [Gradle系列(四)_Gradle插件](/Blogs/Android/Gradle/Gradle系列(四)_Gradle插件.md)
-- [Gradle系列_插件练习-动态移除权限](/Blogs/Android/Gradle/Gradle系列_插件练习-动态移除权限.md)
-- [手把手教大家用Transform_API和ASM实现一个防快速点击案例](/Blogs/Android/Gradle/手把手教大家用Transform_API和ASM实现一个防快速点击案例.md)
-
-### NDK
-
-- [1_NDK和JNI基本概念](/Blogs/Android/NDK/1_NDK和JNI基本概念.md)
-- [2_Android_JNI初识_HelloWorld](/Blogs/Android/NDK/2_Android_JNI初识_HelloWorld.md)
-- [3_JNI开发系列之Java与C相互调用](/Blogs/Android/NDK/3_JNI开发系列之Java与C相互调用.md)
-- [4_JNI_NDK入门详解](/Blogs/Android/NDK/4_JNI_NDK入门详解.md)
+- [Gradle系列(一) Groovy 基础](/Blogs/Android/Gradle/Gradle系列(一)_Groovy_基础.md)
+- [Gradle系列(二) Gradle执行顺序和task](/Blogs/Android/Gradle/Gradle系列(二)_Gradle执行顺序和task.md)
+- [Gradle系列(三) Gradle配置构建和渠道包](/Blogs/Android/Gradle/Gradle系列(三)_Gradle配置构建和渠道包.md)
+- [Gradle系列(四) Gradle插件](/Blogs/Android/Gradle/Gradle系列(四)_Gradle插件.md)
+- [Gradle系列 插件练习-动态移除权限](/Blogs/Android/Gradle/Gradle系列_插件练习-动态移除权限.md)
+- [手把手教大家用Transform API和ASM实现一个防快速点击案例](/Blogs/Android/Gradle/手把手教大家用Transform_API和ASM实现一个防快速点击案例.md)
 
 ### View
 
@@ -154,7 +147,20 @@
 	- Binder在同进程中使用时会影响效率么?
 	- Intent使用过程中的限制
 
-### About me
+
+### 反编译
+
+- [Android_反编译基础知识](/Blogs/Android/反编译/Android_反编译基础知识.md)
+- [Android_反编译实战](/Blogs/Android/反编译/Android_反编译实战.md)
+
+### NDK
+
+- [1_NDK和JNI基本概念](/Blogs/Android/NDK/1_NDK和JNI基本概念.md)
+- [2_Android_JNI初识_HelloWorld](/Blogs/Android/NDK/2_Android_JNI初识_HelloWorld.md)
+- [3_JNI开发系列之Java与C相互调用](/Blogs/Android/NDK/3_JNI开发系列之Java与C相互调用.md)
+- [4_JNI_NDK入门详解](/Blogs/Android/NDK/4_JNI_NDK入门详解.md)
+
+## About me
 
 - #### Email: <a href="mailto:xfhy666@gmail.com">xfhy666@gmail.com</a>
 - #### CSDN: [https://blog.csdn.net/xfhy_](https://blog.csdn.net/xfhy_)
