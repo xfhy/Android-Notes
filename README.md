@@ -77,6 +77,8 @@
 
 ## 5. Kotlin
 
+- [Kotlin协程与架构组件一起使用](/Blogs/Kotlin/Kotlin协程与架构组件一起使用.md)
+
 ## 6. Android
 
 [Android打包流程](/Blogs/Android/Android打包流程.md)

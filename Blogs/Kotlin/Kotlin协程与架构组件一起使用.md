@@ -1,9 +1,26 @@
+Kotlin协程与架构组件一起使用
+---
+#### 目录
+- [1. 添加KTX依赖](#head1)
+- [2. viewModelScope](#head2)
+	- [2.1 用老方式在ViewModel中使用协程](#head3)
+	- [2.2 新方式在ViewModel中使用协程](#head4)
+	- [2.3 viewModelScope的底层实现](#head5)
+- [3. lifecycleScope](#head6)
+	- [3.1 使用](#head7)
+	- [3.2 LifecycleScope的底层实现](#head8)
+- [4. liveData](#head9)
+	- [4.1 使用](#head10)
+	- [4.2 liveData的底层实现](#head11)
+- [5. 小结](#head12)
+
+---
 
 kotlin的协程封装了线程的API，这个线程框架可以让我们很方便得编写异步代码。
 
 虽然协程已经很方便了，但是如果再配合Google提供的架构组件的KTX扩展一起使用，那就更方便了。
 
-### 添加KTX依赖
+### <span id="head1">1. 添加KTX依赖</span>
 
 ```groovy
 //将 Kotlin 协程与架构组件一起使用
@@ -16,9 +33,9 @@ implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.2.0'
 implementation 'androidx.lifecycle:lifecycle-livedata-ktx:2.2.0'
 ```
 
-### ViewModelScope
+### <span id="head2">2. viewModelScope</span>
 
-#### 用老方式在ViewModel中使用协程
+#### <span id="head3">2.1 用老方式在ViewModel中使用协程</span>
 
 在使用ViewModelScope之前，先来回顾一下以前在ViewModel中使用协程的方式。自己管理CoroutineScope，在不需要的时候（一般是在onCleared()）进行取消。否则，可能造成资源浪费、内存泄露等问题。
 
@@ -56,7 +73,7 @@ class JetpackCoroutineViewModel : ViewModel() {
 
 看起来有很多的样板代码，而且在不需要的时候取消协程很容易忘。
 
-#### 新方式在ViewModel中使用协程
+#### <span id="head4">2.2 新方式在ViewModel中使用协程</span>
 
 正是在这种情况下，Google为我们创造了ViewModelScope，它通过向ViewModel类添加扩展属性来方便我们使用协程，而且在ViewModel被销毁时会自动取消其子协程。
 
@@ -86,7 +103,7 @@ class JetpackCoroutineViewModel : ViewModel() {
 
 下面我们来看看Google是怎么实现的。
 
-#### 深入研究viewModelScope
+#### <span id="head5">2.3 viewModelScope的底层实现</span>
 
 点进去看看源码，知根知底，万一后面遇到什么奇怪的bug，在知道原理的情况下，才能更快的想到解决办法。
 
@@ -280,11 +297,11 @@ public ComponentActivity() {
 
 好的，到此为止，咱们理通了viewModelScope的协程是怎么做到自动取消的（ViewModel的mBagOfTags），以及是在什么时候进行取消的（ViewModel的clear()时）。
 
-### LifecycleScope
+### <span id="head6">3. lifecycleScope</span>
 
 对于Lifecycle，Google贴心地提供了LifecycleScope，我们可以直接通过launch来创建Coroutine。
 
-#### 使用
+#### <span id="head7">3.1 使用</span>
 
 举个简单例子，比如在Activity的onCreate里面,每隔100毫秒更新一下TextView的文字。
 
@@ -322,7 +339,7 @@ lifecycleScope.launch {
 
 不管是直接调用launchWhenStarted还是在launch中调用whenStarted都能达到同样的效果。
 
-#### LifecycleScope的底层实现
+#### <span id="head8">3.2 LifecycleScope的底层实现</span>
 
 先来看下lifecycleScope.launch是怎么做到的
 
@@ -594,11 +611,11 @@ whenStateAtLeast也是一个Lifecycle的扩展函数，核心逻辑是在Lifecyc
 
 执行完成一次，就会移除生命周期观察者，相当于我们写到launchWhenResumed之类的函数里面的闭包只会被执行一次。执行完成之后，即使再经过onPause->onResume也不会再次执行。
 
-### liveData
+### <span id="head9">4. liveData</span>
 
 在我们平时使用LiveData的过程中，可能会涉及到这种场景：去请求网络拿结果，然后通过LiveData将数据转出去，在Activity里面收到通知，然后更新UI。非常常见的场景，这种情况下，我们可以通过官方的liveData构造器函数来简化上面的场景代码。
 
-#### 使用
+#### <span id="head10">4.1 使用</span>
 
 ```kotlin
 val netData: LiveData<String> = liveData {
@@ -642,7 +659,7 @@ val netData2: LiveData<String> = liveData {
 
 需要注意的是，后一个调用emitSource的时候需要把前一个emitSource的返回值调用一下dispose函数，切断。
 
-#### liveData的底层实现
+#### <span id="head11">4.2 liveData的底层实现</span>
 
 老规矩，Ctrl+鼠标左键 点进去看源码
 
@@ -773,9 +790,12 @@ internal class LiveDataScopeImpl<T>(
 
 在BlockRunner的maybeRun函数的里面启了个协程，这个scope是在CoroutineLiveData里面初始化的：`CoroutineScope(Dispatchers.Main.immediate + context + supervisorJob)`，接着就是在这个scope里面执行我们在liveData后面闭包里面写的代码，并且有LiveDataScopeImpl的上下文。有了LiveDataScopeImpl的上下文，那么我们就可以使用LiveDataScopeImpl里面的emit方法，而emit方法其实很简单，就是将一个数据交给一个LiveData对象，而这个LiveData就是`liveData{}`返回的那个。此时因为LiveData的数据发生了变化，如果有组件观察了该LiveData并且该组件处于活动状态，那么该组件就会收到数据发生变化的回调。
 
-整个过程大致流程就是在`liveData{}`里面构建了一个协程，返回了一个LiveData，然后我们写的闭包里面的代码实际上是在一个协程里面执行的，我们调用emit方法时就是在更新这个LiveData里面的value。
+整个过程大致流程就是在`liveData{}`里面构建了一个协程，返回了一个LiveData，然后我们写的闭包里面的代码实际上是在一个协程里面执行的，我们调用emit方法时就是在更新这个LiveData里面的value。既然是返回的LiveData，那么天然就与组件生命周期关联上了，只有在组件处于活动状态才能得到结果，而且也避免了一些内存泄露的问题。
 
-### 参考资料
+### <span id="head12">5. 小结</span>
+
+不得不说，官方提供的东西就是方便，可以极大地方便我们使用协程。在使用协程且还没有与架构组件一起使用的小伙伴儿赶快用起来。美滋滋~
+
 
 - https://developer.android.com/kotlin/coroutines
 - https://developer.android.com/topic/libraries/architecture/coroutines?hl=zh-cn
