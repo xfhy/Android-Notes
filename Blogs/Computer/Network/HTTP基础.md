@@ -95,5 +95,169 @@ name=xfhy&gender=male
 
 对应Retrofit代码
 
+```java
+@FormUrlEncoded
+@POST("/users")
+Call<User> addUser(@Field("name") String name,@Field("gender") String gender);
+```
+
+#### PUT
+
+PUT用于修改资源，发送给服务器的内容写在Body里面
+
+```
+PUT  /useers/1  HTTP/1.1
+Host: api.github.com
+Content-Type: application/x-www-form-urlencoded
+Content-Length: 13
+
+gender=male
+```
+
+对应Retrofit代码：
+
+```java
+@FormUrlEncoded
+@PUT("users/{id}")
+Call<User> updateGender(@Path("id") String id,@Field("gender") String gender);
+```
+
+#### DELETE
+
+DELETE用于删除资源，不发送Body。
+
+```
+DELETE  /users/1  HTTP/1.1
+Host: api.github.com
+```
+
+对应Retrofit代码：
+
+```java
+@DELETE("/users/{id}")
+Call<User> getUser(@Path("id") String id,@Query("gender") String gender);
+```
+
+#### HEAD
+
+HEAD方法与GET类似，但是服务器只会返回首部，不会返回Body。
+
+作用：
+
+- 在不获取资源的情况下了解资源的情况（比如，判断其类型）
+- 通过查看响应中的状态码，查看资源是否存在
+- 通过查看首部，测试资源是否被修改
+
 ### 状态码 Status Code
+
+状态码是三位数字，用于对响应结果做出类型化描述（如「获取成功」「内容未找到」）
+
+- 1xx: 临时性消息。 如：100（继续发送）、101（正在切换协议）
+- 2xx: 成功。如200（OK）、201（创建成功）
+- 3xx：重定向。如301（永久移动）、302（暂时移动）、304（内容未改变）
+- 4xx：客户端错误。如400（客户端请求错误）、401（认证失败）、403（被禁止）、404（找不到内容）
+- 5xx：服务器错误。如500（服务器内部错误）
+
 ### 首部 Header
+
+HTTP协议的请求和响应报文中必定包含HTTP首部，也就是Header。HTTP消息的元数据（metadata），有些东西放Body里面不合理，放Header里面就刚好。
+
+下面来介绍一些常见的Header：
+
+#### HOST
+
+目标主机。这个Host不是在网络上用于寻址的，而是在目标服务器上用于定位子服务器的。
+
+#### Content-Type
+
+指定Body的类型，主要有4类：
+
+- text/html
+- x-www-form-urlencoded
+- multipart/form-data
+- application/json,image/jpeg,application/zip ...
+
+##### text/html
+
+请web页面返回响应的类型，Body中返回HTML文本。格式如下：
+
+```
+HTTP/1.1  200  OK
+Content-Type: text/html; charset=utf-8
+Content-Length: 432
+
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8"> 
+......
+```
+
+##### x-www-form-urlencoded
+
+web页面纯文本表单的提交方式
+
+```
+POST  /users/  HTTP/1.1
+Host: api.github.com
+Content-Type: application/x-www-form-urlencoded
+Content-Length: 21
+
+name=xfhy&gender=male
+```
+
+对应Retrofit代码：
+
+```java
+ 
+@FormUrlEncoded
+@POST("/users")
+Call<User> addUser(@Field("name") String name,@Field("gender") String gender);
+```
+
+##### multipart/form-data
+
+web页面含有二进制文件时的提交方式，比如同时提交一个文件+文件名。
+
+```
+ 
+POST /users HTTP/1.1
+Host: api.github.com
+Content-Type: multipart/form-data; boundary=---- WebKitFormBoundary7MA4YWxkTrZu0gW 
+Content-Length: 2382
+
+------WebKitFormBoundary7MA4YWxkTrZu0gW 
+Content-Disposition: form-data; name="name"
+
+xfhy 
+------WebKitFormBoundary7MA4YWxkTrZu0gW 
+Content-Disposition: form-data; name="avatar"; 
+filename="avatar.jpg"
+Content-Type: image/jpeg
+
+JFIFHHvOwX9jximQrWa...... 
+------WebKitFormBoundary7MA4YWxkTrZu0gW--
+```
+其中boundary是分割符的意思，参数的名称是name，值是xfhy。
+
+对应Retrofit代码：
+
+```java
+ 
+@Multipart
+@POST("/users")
+Call<User> addUser(@Part("name") RequestBody name,@Part("avatar") RequestBody avatar);
+...
+RequestBody namePart = RequestBody.create(MediaType.parse("text/plain"), nameStr);
+RequestBody avatarPart = RequestBody.create(MediaType.parse("image/jpeg"), avatarFile);
+api.addUser(namePart, avatarPart);
+```
+
+##### application/json,image/jpeg,application/zip ...
+
+#### Content-Length
+#### Transfer: chunked(分块传输编码)
+#### Location
+#### User-Agent
+#### Range/Accept-Range
+#### 其他Header
