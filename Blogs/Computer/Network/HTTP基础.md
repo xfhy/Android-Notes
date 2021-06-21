@@ -255,9 +255,123 @@ api.addUser(namePart, avatarPart);
 
 ##### application/json,image/jpeg,application/zip ...
 
+单项内容（文本或非文本都可以），用于Web Api的响应或者POST、PUT的请求
+
+**请求中提交JSON**
+
+```
+POST  /users  HTTP/1.1
+Host: api.github.com
+Content-Type: application/json; charset=utf-8
+Content-Length: 38
+
+{"data":"xxxx"}
+```
+
+对应Retrofit代码：
+
+```java
+@POST("/users")
+Call<User> addUser(@Body("user") User user);
+...
+
+//需要使用JSON相关的Converter，Retrofit才会帮我们把JSON转为User
+api.addUser(user);
+```
+
+**响应中返回JSON**：
+
+```
+HTTP/1.1  200  OK
+Content-Type: application/json; charset=utf-8
+Content-Length: 234
+
+{"data":"wocao"}
+```
+
+**请求中提交二进制内容**：
+
+```
+POST  /user/1/avatar  HTTP/1.1
+Host: api.github.com
+Content-Type: image/jpeg
+Content-Length: 3132
+
+JHFFGJFHJVVJ&...
+```
+
+对应Retrofit代码：
+
+```
+@POST("users/{id}/avatar")
+Call<User> updateAvatar(@Path("id") String id,@Body RequestBody avatar);
+
+...
+
+RequestBody avatarBody = RequestBody.create(MediaType.parse("image/jpeg"), avatarFile);
+api.updateAvatar(id, avatarBody)
+```
+
+**响应中返回二进制内容**：
+
+```
+HTTP/1.1  200  OK
+Content-Type: image/jpeg
+Content-Length: 7989
+
+JGGJHGGHJ6768....
+```
+
+
 #### Content-Length
+
+指定Body的长度（字节）。
+
 #### Transfer: chunked(分块传输编码)
+
+用于当响应发起时，内容长度还没确定的情况下。和Content-Length不同时使用。用途是尽早给出响应，减少用户等待。
+
+格式：
+
+```
+HTTP/1.1  200  OK
+Content-Type: text/html
+Transfer-Encoding: chunked
+
+2
+aa
+2
+dd
+6
+fafafs
+0
+```
+
 #### Location
+
+指定重定向的目标URL
+
 #### User-Agent
+
+用户代理，即是谁实际发送请求、接受响应的，例如手机浏览器、某款app。
+
 #### Range/Accept-Range
+
+按范围取数据（比如在断点续传时）。
+
+- **Accept-Range: bytes** 响应报文中出现，表示服务器支持按字节来取范围数据
+- **Range: bytes=<start>-<end>** 请求报文中出现，表示要取哪段数据
+- **Content-Range: <start>-<end>/total** 响应报文中出现，表示发送的是哪段数据
+
+作用: 断点续传、多线程下载。
+
 #### 其他Header
+
+- Accept：客户端能接受的数据类型。如text/html
+- Accept-Charset: 客户端接受的字符集。如utf-8
+- Accept-Encoding: 客户端接受的压缩编码类型。如gzip
+- Content-Encoding: 压缩类型。如gzip
+
+### Cache
+
+作用： 在客户端或中间网络节点缓存数据，降低从服务器取数据的频率，以提高网络性能。
