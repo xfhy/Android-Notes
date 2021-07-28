@@ -441,6 +441,8 @@ public final class SingleMap<T, R> extends Single<R> {
 
     @Override
     protected void subscribeActual(final SingleObserver<? super R> t) {
+        //t是下游
+        //订阅
         source.subscribe(new MapSingleObserver<T, R>(t, mapper));
     }
 
@@ -482,15 +484,403 @@ public final class SingleMap<T, R> extends Single<R> {
 }
 ```
 
+一开场就直接调用上游source订阅MapSingleObserver这个观察者。在MapSingleObserver的逻辑也比较简单,就是实现了onSubscribe、onSuccess、onError这些方法。然后在上游调用onSubscribe时调用下游的onSubscribe；在上游调用onSuccess时自己做了一下`mapper.apply(value)`转换操作，将数据转换成下游所需要的，然后再调用下游的onSuccess传递给下游；onError同onSubscribe原理是一样的。
+
 #### Single.delay 无后续，有延迟
+
+来段示例代码:
+
+```kotlin
+val singleInt: Single<Int> = Single.just(1)
+val singleDelay: Single<Int> = singleInt.delay(1, TimeUnit.SECONDS)
+val observer = object : SingleObserver<Int> {
+    override fun onSubscribe(d: Disposable?) {
+        log("onSubscribe")
+    }
+
+    override fun onSuccess(t: Int?) {
+        log("onSuccess")
+    }
+
+    override fun onError(e: Throwable?) {
+        log("onError")
+    }
+}
+singleDelay.subscribe(observer)
+```
+
+直捣黄龙，Single.delay背后的对象是SingleDelay。现在有经验了，直接看它的subscribeActual
+
+```java
+@Override
+protected void subscribeActual(final SingleObserver<? super T> observer) {
+    //可以确定的是这是一个Disposable
+    final SequentialDisposable sd = new SequentialDisposable();
+    //将这个Disposable通过onSubscribe传递给下游
+    observer.onSubscribe(sd);
+    //让上游订阅Delay这个观察者
+    source.subscribe(new Delay(sd, observer));
+}
+```
+
+看下SequentialDisposable是什么玩意儿
+
+```java
+public final class SequentialDisposable
+extends AtomicReference<Disposable>
+implements Disposable {
+    public SequentialDisposable() {
+        // nothing to do
+    }
+    public SequentialDisposable(Disposable initial) {
+        lazySet(initial);
+    }
+    public boolean update(Disposable next) {
+        return DisposableHelper.set(this, next);
+    }
+    public boolean replace(Disposable next) {
+        return DisposableHelper.replace(this, next);
+    }
+
+    @Override
+    public void dispose() {
+        DisposableHelper.dispose(this);
+    }
+
+    @Override
+    public boolean isDisposed() {
+        return DisposableHelper.isDisposed(get());
+    }
+}
+```
+
+似曾相识，上面的IntervalObserver也是这种思想。只不过这里多了2个update和replace方法，可以随时更换AtomicReference里面的Disposable对象。这就体现出了这种设计的好处，不管里面的Disposable怎么更换，传递给下游的是这个SequentialDisposable，下游只需要调SequentialDisposable的dispose就将其里面的Disposable给取消掉了，而不用管里面的Disposable究竟是谁。
+
+下面咱们来看SingleDelay里面的内部类Delay（观察者）
+
+```java
+final class Delay implements SingleObserver<T> {
+    //传递给下游的Disposable
+    private final SequentialDisposable sd;
+    //下游的观察者
+    final SingleObserver<? super T> downstream;
+
+    Delay(SequentialDisposable sd, SingleObserver<? super T> observer) {
+        this.sd = sd;
+        this.downstream = observer;
+    }
+
+    @Override
+    public void onSubscribe(Disposable d) {
+        //开始订阅的时候，sd内部的Disposable是上游给过来的
+        sd.replace(d);
+    }
+
+    @Override
+    public void onSuccess(final T value) {
+        //上游把数据给过来之后，就不用管上游了，直接把sd里面Disposable 设置成线程调度器给回来那个
+        //因为此时下游调用dispose的话，直接取消调度器里面的任务就行了
+        //巧妙地将sd里面的Disposable掉包了
+        sd.replace(scheduler.scheduleDirect(new OnSuccess(value), time, unit));
+    }
+
+    @Override
+    public void onError(final Throwable e) {
+        sd.replace(scheduler.scheduleDirect(new OnError(e), delayError ? time : 0, unit));
+    }
+
+    final class OnSuccess implements Runnable {
+        private final T value;
+
+        OnSuccess(T value) {
+            this.value = value;
+        }
+
+        @Override
+        public void run() {
+            //调度器执行到该任务时，将数据传递给下游
+            downstream.onSuccess(value);
+        }
+    }
+
+    final class OnError implements Runnable {
+        private final Throwable e;
+
+        OnError(Throwable e) {
+            this.e = e;
+        }
+
+        @Override
+        public void run() {
+            downstream.onError(e);
+        }
+    }
+}
+```
+
+这段代码比较精彩，首先在上游订阅Delay的时候，触发onSubscribe，Delay内部随即将该Disposable存入SequentialDisposable对象（需要注意的是下游拿到的Disposable始终是这个SequentialDisposable）中。此时如果下游调用dispose，也就是调用SequentialDisposable的dispose，也就是上游的dispose，dispose流程在这个节点上就完成了，向上传递。
+
+上游有数据了，通过onSuccess传递给观察者Delay的时候，SequentialDisposable就可以不用管上游的那个Disposable了，此时要关心的是传递给线程调度器里面的任务的取消事件了。所以直接将调度器返回的Disposable替换到SequentialDisposable内部，此时下游进行取消时，就直接把任务给取消掉了。
+
+当调度器执行到任务OnSuccess时，就把数据传递给下游，这个节点的任务就完成了。
+
 #### Observable.map 有后续，无延迟
+
+Observable.map所对应的是ObservableMap，直接上代码：
+
+```java
+public final class ObservableMap<T, U> extends AbstractObservableWithUpstream<T, U> {
+    final Function<? super T, ? extends U> function;
+
+    public ObservableMap(ObservableSource<T> source, Function<? super T, ? extends U> function) {
+        super(source);
+        this.function = function;
+    }
+
+    @Override
+    public void subscribeActual(Observer<? super U> t) {
+        //t是下游的观察者
+        //source是上游
+        source.subscribe(new MapObserver<T, U>(t, function));
+    }
+
+    static final class MapObserver<T, U> extends BasicFuseableObserver<T, U> {
+        final Function<? super T, ? extends U> mapper;
+
+        MapObserver(Observer<? super U> actual, Function<? super T, ? extends U> mapper) {
+            super(actual);
+            this.mapper = mapper;
+        }
+
+        @Override
+        public void onNext(T t) {
+            if (done) {
+                return;
+            }
+
+            if (sourceMode != NONE) {
+                downstream.onNext(null);
+                return;
+            }
+
+            U v;
+
+            try {
+                v = Objects.requireNonNull(mapper.apply(t), "The mapper function returned a null value.");
+            } catch (Throwable ex) {
+                fail(ex);
+                return;
+            }
+            downstream.onNext(v);
+        }
+
+        @Override
+        public int requestFusion(int mode) {
+            return transitiveBoundaryFusion(mode);
+        }
+
+        @Nullable
+        @Override
+        public U poll() throws Throwable {
+            T t = qd.poll();
+            return t != null ? Objects.requireNonNull(mapper.apply(t), "The mapper function returned a null value.") : null;
+        }
+    }
+}
+```
+
+在subscribeActual中并没有直接调用onSubscribe,而MapObserver中又没有这个方法，那onSubscribe肯定是在其父类中完成的。在看onSubscribe之前咱干脆先把onNext理一下，这里通过mapper.apply转一下之后马上就交给下游的onNext去了。
+
+```java
+//BasicFuseableObserver.java
+public abstract class BasicFuseableObserver<T, R> implements Observer<T>, QueueDisposable<R> {
+    public BasicFuseableObserver(Observer<? super R> downstream) {
+        this.downstream = downstream;
+    }
+    @Override
+    public final void onSubscribe(Disposable d) {
+        //验证上游   d是上游的Disposable   upstream是当前类的字段，还没有被赋值
+        if (DisposableHelper.validate(this.upstream, d)) {
+            this.upstream = d;
+            if (d instanceof QueueDisposable) {
+                this.qd = (QueueDisposable<T>)d;
+            }
+            //onSubscribe之前想做点什么事情的话，在beforeDownstream里面做
+            if (beforeDownstream()) {
+                //调用下游的onSubscribe
+                downstream.onSubscribe(this);
+                //onSubscribe之后想做点什么事情的话，在afterDownstream里面做
+                afterDownstream();
+            }
+
+        }
+    }
+    protected boolean beforeDownstream() {
+        return true;
+    }
+    protected void afterDownstream() {
+    }
+    @Override
+    public void dispose() {
+        upstream.dispose();
+    }
+}
+
+//DisposableHelper.java
+public static boolean validate(Disposable current, Disposable next) {
+    if (next == null) {
+        RxJavaPlugins.onError(new NullPointerException("next is null"));
+        return false;
+    }
+    if (current != null) {
+        next.dispose();
+        reportDisposableSet();
+        return false;
+    }
+    return true;
+}
+```
+
+还是先调用下游的onSubscribe，不过，并没有将上游的Disposable直接传给下游，而是将中间节点BasicFuseableObserver自己传给了下游，同时将上游的Disposable存储起来，方便待会儿dispose。
+
 #### Observable.delay 无后续，有延迟
+
+Observable.delay 对应的是ObservableDelay
+
+```java
+public final class ObservableDelay<T> extends AbstractObservableWithUpstream<T, T> {
+    @Override
+    @SuppressWarnings("unchecked")
+    public void subscribeActual(Observer<? super T> t) {
+        Observer<T> observer;
+        if (delayError) {
+            observer = (Observer<T>)t;
+        } else {
+            observer = new SerializedObserver<>(t);
+        }
+        Scheduler.Worker w = scheduler.createWorker();
+        source.subscribe(new DelayObserver<>(observer, delay, unit, w, delayError));
+    }
+}
+```
+
+在subscribeActual没有调用下游的onSubscribe，那说明是在DelayObserver中完成的
+
+```java
+static final class DelayObserver<T> implements Observer<T>, Disposable {
+    final Scheduler.Worker w;
+    Disposable upstream;
+
+    DelayObserver(Observer<? super T> actual, long delay, TimeUnit unit, Worker w, boolean delayError) {
+        super();
+        this.downstream = actual;
+        this.w = w;
+        ...
+    }
+
+    @Override
+    public void onSubscribe(Disposable d) {
+        //1. 先验证一下上游  然后将上游的Disposable赋值给upstream
+        //2. 调用下游的onSubscribe，把自己传给下游
+        if (DisposableHelper.validate(this.upstream, d)) {
+            this.upstream = d;
+            downstream.onSubscribe(this);
+        }
+    }
+
+    @Override
+    public void onNext(final T t) {
+        //OnNext任务提交给调度器执行->在执行任务时调用下游的onNext方法
+        w.schedule(new OnNext(t), delay, unit);
+    }
+
+    @Override
+    public void onError(final Throwable t) {
+        w.schedule(new OnError(t), delayError ? delay : 0, unit);
+    }
+
+    @Override
+    public void onComplete() {
+        w.schedule(new OnComplete(), delay, unit);
+    }
+
+    @Override
+    public void dispose() {
+        //同时取消上游的Disposable和自己执行的调度器任务
+        upstream.dispose();
+        w.dispose();
+    }
+
+    final class OnNext implements Runnable {
+        private final T t;
+
+        OnNext(T t) {
+            this.t = t;
+        }
+
+        @Override
+        public void run() {
+            downstream.onNext(t);
+        }
+    }
+    ...
+}
+```
+
+onXxx的所有操作都放到了DelayObserver里面来完成，在上游调用到这节的onSubscribe时，先验证一下上游  然后将上游的Disposable赋值给upstream，调用下游的onSubscribe，把自己传给下游。
+
+当下游调用dispose时，在DelayObserver的dispose方法中将上游的Disposable给取消掉，然后把自己的调度器任务也给取消掉。
+
+事件的传递：当上游调用到这一节的onNext时，OnNext任务（Runnable）提交给调度器执行->在执行任务时调用下游的onNext方法。
 
 ### 线程切换
 
+线程切换是RxJava的另一个重要功能。
+
 #### subscribeOn
 
+subscribeOn对应的是SingleSubscribeOn这个类
+
+```java
+public final class SingleSubscribeOn<T> extends Single<T> {
+    final Scheduler scheduler;
+
+    public SingleSubscribeOn(SingleSource<? extends T> source, Scheduler scheduler) {
+        this.source = source;
+        this.scheduler = scheduler;
+    }
+    @Override
+    protected void subscribeActual(final SingleObserver<? super T> observer) {
+        final SubscribeOnObserver<T> parent = new SubscribeOnObserver<>(observer, source);
+        observer.onSubscribe(parent);
+        
+        //切线程
+        Disposable f = scheduler.scheduleDirect(parent);
+
+        parent.task.replace(f);
+
+    }
+}
+```
+
+直接看subscribeActual方法，很明显是将parent这个任务交给了线程调度器去执行。那我们直接看SubscribeOnObserver的run方法即可
+
+```java
+static final class SubscribeOnObserver<T>
+extends AtomicReference<Disposable>
+implements SingleObserver<T>, Disposable, Runnable {
+    @Override
+    public void run() {
+        source.subscribe(this);
+    }
+}
+```
+
+在scheduleDirect那里切线程，然后在另一个线程中去执行`source.subscribe(this)`，也就是在**另一个线程中去执行上游的订阅操作**。
+
 #### observeOn
+
+
 
 ### 大纲
 
