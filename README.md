@@ -121,6 +121,7 @@
 
 - [APK包体积优化](/Blogs/Android/实战常见问题/APK包体积优化.md)
 - [屏幕适配](/Blogs/Android/实战常见问题/屏幕适配.md)
+- [插件化](/Blogs/Android/实战常见问题/插件化.md)
 
 ### Gradle
 
