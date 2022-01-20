@@ -578,7 +578,7 @@ final class TraversalRunnable implements Runnable {
 
 #### <span id="head11">检测FPS</span>
 
-有了上面的分析，我们知道Choreographer内部去监听了VSYNC信号，并且当VSYNC信号来临时会发个异步消息给Looper，在执行到这个消息时会通知外部观察者（上面的观察者就是ViewRootImpl），通知ViewRootImpl可以开始绘制了。Choreographer的每次回调都是在通知ViewRootImpl绘制，我们只需要统计出1秒内这个回调次数有多少次，即可知道是多少fps。
+有了上面的分析，我们知道Choreographer内部去监听了VSYNC信号，并且当VSYNC信号来临时会发个异步消息给Looper，在执行到这个消息时会通知外部观察者（上面的观察者就是ViewRootImpl），通知ViewRootImpl可以开始绘制了。Choreographer的每次回调都是在通知观察者，可以进行绘制了，我们只需要统计出1秒内这个回调次数有多少次，即可知道是多少fps。
 
 反正Choreographer是线程单例，我在主线程调用获取它的实例，然后模仿ViewRootImpl调用postCallback注册一个观察者。于是我将该思路写成代码，然后发现，postCallback是居然是hide方法。/无语
 
