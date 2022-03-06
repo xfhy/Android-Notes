@@ -106,8 +106,6 @@ SELECT sql FROM sqlite_master WHERE type = 'table' AND tbl_name = 'COMPANY';
 
 #### <span id="head8">运算符</span>
 
-![0cf868499c19b2db1abfaabcb881404f.png](evernotecid://0A83DBF7-DA5C-4B1F-B752-7386516115CA/appyinxiangcom/22247482/ENResource/p1136)
-
 ```sql
 SELECT * FROM COMPANY WHERE SALARY > 50000;
 
