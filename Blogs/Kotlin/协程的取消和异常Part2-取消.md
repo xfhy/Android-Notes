@@ -18,9 +18,9 @@
 
 翻译自：https://medium.com/androiddevelopers/cancellation-in-coroutines-aa6b90163629
 
-标题：Coroutines: first things first
+标题：Cancellation in coroutines
 
-副标题：Cancellation and Exceptions in Coroutines (Part 1)
+副标题：Cancellation and Exceptions in Coroutines (Part 2)
 
 在不需要协程继续工作时，需要及时地取消它，以免浪费内存和电量。本篇文章将带你了解协程取消的来龙去脉。
 
