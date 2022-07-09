@@ -28,7 +28,7 @@ Kotlin挂起函数平时在学习和工作中用的比较多，掌握其原理�
 ```kotlin
 suspend fun getUserName(): String {
     delay(1000L)
-    return "张三"
+    return "云天明"
 }
 ```
 
@@ -83,7 +83,7 @@ public interface Continuation<in T> {
 ```kotlin
 suspend fun getUserName(): String {
     delay(1000L)
-    return "张三"
+    return "云天明"
 }
 ```
 
@@ -116,11 +116,11 @@ import kotlinx.coroutines.delay
 
 suspend fun getUserName(): String {
     delay(1000L)
-    return "张三"
+    return "云天明"
 }
 ```
 
-就这样，一个很普通的挂起函数，在内部只是简单调用了下delay，延迟1000L，再返回结果“张三”。虽然这个函数很简单，但反编译出来的代码却有点多，而且不好看懂，我先把原代码贴出来，待会儿再放我重新组织过的代码，作为对比：
+就这样，一个很普通的挂起函数，在内部只是简单调用了下delay，延迟1000L，再返回结果“云天明”。虽然这个函数很简单，但反编译出来的代码却有点多，而且不好看懂，我先把原代码贴出来，待会儿再放我重新组织过的代码，作为对比：
 
 ```java
 public final class CpsTestKt {
@@ -167,7 +167,7 @@ public final class CpsTestKt {
          throw new IllegalStateException("call to 'resume' before 'invoke' with coroutine");
       }
 
-      return "张三";
+      return "云天明";
    }
 }
 
@@ -242,13 +242,13 @@ public final class CpsTestKt {
             case 1:
                 // 检测异常
                 ResultKt.throwOnFailure($result);
-                //label 1这里没有return,而是会走到下面的return "张三"语句
+                //label 1这里没有return,而是会走到下面的return "云天明"语句
                 break;
             default:
                 throw new IllegalStateException("call to 'resume' before 'invoke' with coroutine");
         }
 
-        return "张三";
+        return "云天明";
     }
 }
 ```
@@ -262,7 +262,7 @@ invokeSuspend是一个抽象方法，当协程从挂起状态想要恢复时，�
 
 分析完TestContinuation，再来看一下第一次进入getUserName是怎么走的。首先，第一次进入时，continuation肯定不是TestContinuation，因为此时还没有new过TestContinuation实例，所以会走到创建TestContinuation的逻辑，并且会把continuation包进去。然后刚创建完的testContinuation的label未赋其他值，那就是初始值0了。那么switch状态机那里，就走case 0，先把label改成1，因为马上就要挂起了，待会儿恢复时需要执行下一个状态的代码。调用Kotlin的库函数delay，它是一个挂起函数，将testContinuation传入其中，方便它进行invokeSuspend回调。调用挂起函数，那么它可能会返回`COROUTINE_SUSPENDED`，表示它已经被挂起了，如果是挂起了那么getUserName就走完了，到时会从invokeSuspend恢复。在还没有恢复的时候，这个协程所在的线程可以去做其他事情。
 
-恢复的时候，又开始从头走getUserName，此时的continuation已经是TestContinuation，不会重新创建。它的label之前已经被改成1了的，所以switch状态机那里，会走到case 1，先检测一下有没有异常，没有异常就返回真正的返回值了“张三”。
+恢复的时候，又开始从头走getUserName，此时的continuation已经是TestContinuation，不会重新创建。它的label之前已经被改成1了的，所以switch状态机那里，会走到case 1，先检测一下有没有异常，没有异常就返回真正的返回值了“云天明”。
 
 分析到这里也就完了，上面就是一个非常简单的挂起函数的反编译分析的整个过程。下面我们简单分析一下伪挂起函数会带来什么效果。
 
@@ -271,11 +271,11 @@ invokeSuspend是一个抽象方法，当协程从挂起状态想要恢复时，�
 在之前的CpsTest.kt里面简单改一下
 
 ```kotlin
-suspend fun fakeSuspendFun() = "李四"
+suspend fun fakeSuspendFun() = "维德"
 
 suspend fun getUserName(): String {
     println(fakeSuspendFun())
-    return "张三"
+    return "云天明"
 }
 ```
 
@@ -285,7 +285,7 @@ suspend fun getUserName(): String {
 public final class CpsTestKt {
    @Nullable
    public static final Object fakeSuspendFun(@NotNull Continuation<? super java.lang.String> $completion) {
-      return "李四";
+      return "维德";
    }
 
    @Nullable
@@ -346,7 +346,7 @@ public final class CpsTestKt {
       //走这里
       Object var1 = var10000;
       System.out.println(var1);
-      return "张三";
+      return "云天明";
    }
 }
 ```
@@ -371,33 +371,21 @@ suspend fun showMoments() {
     println(feedList)
 }
 
-//挂起函数
-// ↓
 suspend fun getUserId(): String {
-    withContext(Dispatchers.IO) {
-        delay(1000L)
-    }
+    delay(1000L)
     return "1sa13124daadar2"
 }
 
-//挂起函数
-// ↓
 suspend fun getFriendList(userId: String): String {
-    withContext(Dispatchers.IO) {
-        println("正在获取${userId}的朋友列表")
-        delay(1000L)
-    }
-    return "张三, 李四"
+    println("正在获取${userId}的朋友列表")
+    delay(1000L)
+    return "云天明, 维德"
 }
 
-//挂起函数
-// ↓
 suspend fun getFeedList(userId: String, list: String): String {
-    withContext(Dispatchers.IO) {
-        println("获取${userId}的朋友圈($list)")
-        delay(1000L)
-    }
-    return "张三: 酒好喝吗？烟好抽吗？即使是可口可乐，第一次尝也不好喝，让人上瘾的东西都是这样;\n李四: 前进！前进！！不择手段地前进！！！"
+    println("获取${userId}的朋友圈($list)")
+    delay(1000L)
+    return "云天明: 酒好喝吗？烟好抽吗？即使是可口可乐，第一次尝也不好喝，让人上瘾的东西都是这样;\n维德: 前进！前进！！不择手段地前进！！！"
 }
 ```
 
@@ -407,10 +395,10 @@ suspend fun getFeedList(userId: String, list: String): String {
 start
 1sa13124daadar2
 正在获取1sa13124daadar2的朋友列表
-张三, 李四
-获取1sa13124daadar2的朋友圈(张三, 李四)
-张三: 酒好喝吗？烟好抽吗？即使是可口可乐，第一次尝也不好喝，让人上瘾的东西都是这样;
-李四: 前进！前进！！不择手段地前进！！！
+云天明, 维德
+获取1sa13124daadar2的朋友圈(云天明, 维德)
+云天明: 酒好喝吗？烟好抽吗？即使是可口可乐，第一次尝也不好喝，让人上瘾的东西都是这样;
+维德: 前进！前进！！不择手段地前进！！！
 end
 ```
 
@@ -646,7 +634,7 @@ public final class TestSuspendKt {
          throw new IllegalStateException("call to 'resume' before 'invoke' with coroutine");
       }
 
-      return "张三, 李四";
+      return "云天明, 维德";
    }
 
    @Nullable
@@ -694,7 +682,7 @@ public final class TestSuspendKt {
          throw new IllegalStateException("call to 'resume' before 'invoke' with coroutine");
       }
 
-      return "张三: 酒好喝吗？烟好抽吗？即使是可口可乐，第一次尝也不好喝，让人上瘾的东西都是这样;\n李四: 前进！前进！！不择手段地前进！！！";
+      return "云天明: 酒好喝吗？烟好抽吗？即使是可口可乐，第一次尝也不好喝，让人上瘾的东西都是这样;\n维德: 前进！前进！！不择手段地前进！！！";
    }
 }
 ```
