@@ -124,6 +124,7 @@
 - [Choreographer原理及应用](/Blogs/Android/系统源码解析/Choreographer原理及应用.md)
 - [PMS安装App的过程](/Blogs/Android/系统源码解析/PMS安装App的过程.md)
 - [Handler相关知识点大全](/Blogs/Android/系统源码解析/Handler相关知识点大全.md)
+- [View动画主流程全解析](/Blogs/Android/系统源码解析/View动画主流程全解析.md)
 
 ### 三方库原理
 
