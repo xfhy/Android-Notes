@@ -85,6 +85,10 @@
 ## 5. Kotlin
 
 - [Kotlin协程与架构组件一起使用](/Blogs/Kotlin/Kotlin协程与架构组件一起使用.md)
+- [Kotlin作用域函数](/Blogs/Kotlin/Kotlin作用域函数.md)
+
+---
+
 - [协程的取消和异常Part1-核心概念](/Blogs/Kotlin/协程的取消和异常Part1-核心概念.md)
 - [协程的取消和异常Part2-取消](/Blogs/Kotlin/协程的取消和异常Part2-取消.md)
 - [协程的取消和异常Part3-异常](/Blogs/Kotlin/协程的取消和异常Part3-异常.md)
