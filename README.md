@@ -3,7 +3,7 @@
 <img src="https://raw.githubusercontent.com/xfhy/Android-Notes/master/Images/Android_notes_logo.png" width="35%">
 </div>
 
-✍🏻 这里是写博客的地方，努力打造一系列适合初中高级工程师能够看得懂的优质文章，如果想第一时间获取文章，欢迎关注我的公众号：xfhy，Android的路很长，我们一起走下去！:v:
+✍🏻 这里是写博客 or 笔记的地方，Android的路很长，我们一起走下去！:v:
 
 **本项目会长期更新，不断完善** :triangular_flag_on_post:  如果大家觉得它对你有帮助的话，可以点个star收藏一下~  你的鼓励是我写作的最大动力:beers:
 
