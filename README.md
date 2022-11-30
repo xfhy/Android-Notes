@@ -141,6 +141,7 @@
 - [屏幕适配](/Blogs/Android/实战常见问题/屏幕适配.md)
 - [插件化](/Blogs/Android/实战常见问题/插件化.md)
 - [热更新](/Blogs/Android/实战常见问题/热更新.md)
+- [ANR 触发、监控、分析 一网打尽](/Blogs/Android/实战常见问题/ANR触发、监控、分析一网打尽.md)
 
 ### Gradle
 
