@@ -1,8 +1,45 @@
-# ANR线上监控学习计划
+ANR线上监控学习
+---
+#### 目录
+- [1. ANR是什么](#head1)
+- [2. 导致ANR的原因](#head2)
+- [3. 线下拿到ANR日志](#head3)
+- [4. ANR场景](#head4)
+- [5. ANR触发流程](#head5)
+	- [5.1 Service、Broadcast、Provider触发ANR](#head6)
+	- [5.2 Input触发ANR](#head7)
+	- [5.3 哪些路径会引发ANR？](#head8)
+	- [5.4 ANR dump主要流程](#head9)
+- [6. ANR监控](#head10)
+	- [6.1 WatchDog](#head11)
+	- [6.2 监控SIGQUIT信号](#head12)
+		- [6.2.1 完善的ANR监控方案](#head13)
+			- [6.2.1.1 误报](#head14)
+			- [6.2.1.2 漏报](#head15)
+			- [6.2.1.3 获取ANR Trace](#head16)
+- [7. ANR分析](#head17)
+	- [7.1 trace文件分析](#head18)
+	- [7.2 ANR案例分析](#head19)
+		- [7.2.1 主线程无卡顿，处于正常状态堆栈](#head20)
+		- [7.2.2 主线程执行耗时操作](#head21)
+		- [7.2.3 主线程被锁阻塞](#head22)
+		- [7.2.4 CPU被抢占](#head23)
+		- [7.2.5 内存紧张导致ANR](#head24)
+		- [7.2.6 系统服务超时导致ANR](#head25)
+- [8. ANR影响因素](#head26)
+- [9. 弥补不足](#head27)
+- [10. QA](#head28)
+	- [10.1 在Activity#onCreate中sleep会导致ANR吗？](#head29)
+- [11. 小结](#head30)
 
-仅做学习和记录，非原创。
+---
+> 仅做学习和记录，方案非原创。
 
-## 导致ANR的原因
+## <span id="head1">1. ANR是什么</span>
+
+ANR全称是Applicatipon No Response，Android设计ANR的用意，是系统通过与之交互的组件以及用户交互进行超时监控，用来判断应用进程是否存在卡死或响应过慢的问题，通俗来说就是很多系统中看门狗(watchdog)的设计思想。
+
+## <span id="head2">2. 导致ANR的原因</span>
 
 耗时操作导致ANR，并不一定是app的问题，实际上，有很大的概率是系统原因导致的ANR。下面简单分析一下哪些操作是应用层导致的ANR，哪些是系统导致的ANR。
 
@@ -18,7 +55,7 @@
 - **系统服务无法及时响应**：比如获取系统联系人等，系统的服务都是Binder机制，服务能力也是有限的，有可能系统服务长时间不响应导致ANR
 - **其他应用占用大量内存**
 
-## 线下拿到ANR日志
+## <span id="head3">3. 线下拿到ANR日志</span>
 
 - adb pull /data/anr/
 - adb bugreport
@@ -29,7 +66,7 @@
 - 可能没有堆栈信息
 
 
-## ANR场景
+## <span id="head4">4. ANR场景</span>
 
 - Service Timeout:比如前台服务在20s内未执行完成，后台服务Timeout时间是前台服务的10倍，200s；
 - BroadcastQueue Timeout：比如前台广播在10s内未执行完成，后台60s
@@ -52,17 +89,17 @@ static final int BROADCAST_BG_TIMEOUT = 60*1000;
 static final int KEY_DISPATCHING_TIMEOUT = 5*1000;
 ```
 
-## ANR触发流程
+## <span id="head5">5. ANR触发流程</span>
 
-### Service、Broadcast、Provider触发ANR
+ANR触发流程大致可分为2种，一种是Service、Broadcast、Provider触发ANR，另外一种是Input触发ANR。
+
+### <span id="head6">5.1 Service、Broadcast、Provider触发ANR</span>
 
 大体流程可分为3个步骤：
 
 1. 埋定时炸弹
 2. 拆炸弹
 3. 引爆炸弹
-
-todo xfhy 举例细化Service的这3个步骤
 
 下面举个startService的例子，详细说说这3个步骤：
 
@@ -258,13 +295,13 @@ private static class AnrRecord {
 
 开了个子线程，然后调用ProcessRecord的appNotResponding方法来处理ANR的流程（弹出app无响应弹窗、dump堆栈什么的），具体流程下面会细说。到这里，炸弹就完全引爆了，触发了ANR。
 
-### Input触发ANR
+### <span id="head7">5.2 Input触发ANR</span>
 
 input的超时检测机制跟Service、Broadcast、Provider截然不同，并非时间到了就一定被爆炸，而是处理后续上报事件的过程才会去检测是否该爆炸，所以更像是扫雷的过程。
 
 input超时机制为什么是扫雷，而非定时爆炸？由于对于input来说即便某次事件执行时间超过Timeout时长，只要用户后续没有再生成输入事件，则不会触发ANR。这里的扫雷是指当前输入系统中正在处理着某个耗时事件的前提下，后续的每一次input事件都会检测前一个正在处理的事件是否超时（进入扫雷状态），检测当前的时间距离上次输入事件分发时间点是否超过timeout时长。如果没有超过，则会重置anr的Timeout，从而不会爆炸。
 
-### 哪些路径会引发ANR？
+### <span id="head8">5.3 哪些路径会引发ANR？</span>
 
 从埋下炸弹到拆炸弹之间的任何一个或多个路径执行慢都会导致ANR。这里以Service为例，如：
 
@@ -273,13 +310,13 @@ input超时机制为什么是扫雷，而非定时爆炸？由于对于input来�
 - sp操作执行慢
 - `system_server`进程的binder线程繁忙而导致没有及时收到拆炸弹的指令
 
-### ANR dump主要流程
+### <span id="head9">5.4 ANR dump主要流程</span>
 
 > ANR流程基本是在`system_server`系统进程完成的，系统进程的行为我们很难监控到，想要监控这个事情就得从系统进程与应用进程沟通的边界着手，看边界上有没有可以操作的地方。
 
 不管是怎么发生的ANR，最后都会走到`appNotResponding` ，比如输入超时的路径
 
-1. ActivityManagerService#`inputDispatchingTimedOut`
+1. `ActivityManagerService#inputDispatchingTimedOut`
 2. `AnrHelper#appNotResponding`
 3. `AnrConsumerThread#run`
 4. `AnrRecord#appNotResponding`
@@ -519,37 +556,103 @@ void* SignalCatcher::Run(void* arg) {
 1. 系统监控到app发生ANR后，收集了一些相关进程pid（包括发生ANR的进程），准备让这些进程dump堆栈，从而生成ANR Trace文件
 2. 系统开始向这些进程发送SIGQUIT信号，进程收到SIGQUIT信号之后开始dump堆栈
 
-todo xfhy 图片转到github  图片转自微信客户端技术团队
-
 整个过程的示意图：
 
-![Untitled](ANR%E7%BA%BF%E4%B8%8A%E7%9B%91%E6%8E%A7%E5%AD%A6%E4%B9%A0%E8%AE%A1%E5%88%92%20fa2cf0285c13446bad967cededcaacc1/Untitled.png)
+![ANR流程示意图](https://raw.githubusercontent.com/xfhy/Android-Notes/master/Images/ANR流程示意图.png)
+
+> 图片转自微信客户端技术团队
 
 可以看到，一个进程发生ANR之后的整个流程，只有dump堆栈的行为会发生在发生ANR的进程中，其他过程全在系统进程进行处理的，我们无法感知。这个过程从收到SIGQUIT信号开始到使用socket写Trace结束。然后继续回到系统进程完成剩余的ANR流程，这2个边界上我们可以做做文章。后面我们会详细叙述。
 
-## ANR监控
+## <span id="head10">6. ANR监控</span>
 
-### WatchDog
+Android M(6.0) 版本之后，应用侧无法直接通过监听 `data/anr/trace` 文件，监控是否发生 ANR。目前了解到的能用的方案主要有下面2种：
 
-> 本质上是卡顿监控方案，拿来监控ANR不严谨
+### <span id="head11">6.1 WatchDog</span>
 
-todo xfhy 解释基本原理，附上之前文章的链接
+开个子线程，不断往主线程发送消息，并设置超时检测，如果超时还没执行相应消息，则判定为可能发生ANR。需要进一步从系统服务获取相关数据（可通过ActivityManagerService.getProcessesInErrorState()方法获取进程的ANR信息），进一步判定是否真的发生了ANR。
 
-### Looper Printer
+这个方案对应的开源库为[ANR-WatchDog](https://github.com/SalomonBrys/ANR-WatchDog/)，源码比较简单，只有2个源文件。简单解析一下核心代码：
 
-> 本质上是卡顿监控方案，拿来监控ANR不严谨
+```java
 
-todo xfhy 解释基本原理，附上之前文章的链接
+private final Handler _uiHandler = new Handler(Looper.getMainLooper());
+private final int _timeoutInterval;
+private volatile long _tick = 0;
+private volatile boolean _reported = false;
 
-### 监控SIGQUIT信号
+private final Runnable _ticker = new Runnable() {
+    @Override public void run() {
+        _tick = 0;
+        _reported = false;
+    }
+};
 
-> 这种方案才是真正的监控ANR，matrix、xCrash都在使用这种方案。
+@Override
+public void run() {
+    setName("|ANR-WatchDog|");
+
+    //_timeoutInterval为设定的超时时长
+    long interval = _timeoutInterval;
+    while (!isInterrupted()) {
+        //_tick为标志，主线程执行了下面发送的_ticker这个Runnable, 那么_tick就会被置为0
+        boolean needPost = _tick == 0;
+        //在子线程里面需要把标志改为非0，待会儿主线程执行了才知道
+        _tick += interval;
+        if (needPost) {
+            //发个消息给主线程
+            _uiHandler.post(_ticker);
+        }
+
+        //子线程睡一段时间，起来的时候要是标志位_tick没有被改成0，说明主线程太忙了，或者卡顿了，没来得及执行该消息
+        try {
+            Thread.sleep(interval);
+        } catch (InterruptedException e) {
+            _interruptionListener.onInterrupted(e);
+            return ;
+        }
+
+        // If the main thread has not handled _ticker, it is blocked. ANR.
+        if (_tick != 0 && !_reported) {
+            //noinspection ConstantConditions
+            //排除debug的情况
+            if (!_ignoreDebugger && (Debug.isDebuggerConnected() || Debug.waitingForDebugger())) {
+                Log.w("ANRWatchdog", "An ANR was detected but ignored because the debugger is connected (you can prevent this with setIgnoreDebugger(true))");
+                _reported = true;
+                continue ;
+            }
+
+            //可以自定义一个Interceptor告诉watchDog，当前上下文环境是否可以进行上报
+            interval = _anrInterceptor.intercept(_tick);
+            if (interval > 0) {
+                continue;
+            }
+
+            //上报线程堆栈
+            final ANRError error;
+            if (_namePrefix != null) {
+                error = ANRError.New(_tick, _namePrefix, _logThreadsWithoutStackTrace);
+            } else {
+                error = ANRError.NewMainOnly(_tick);
+            }
+            //回调
+            _anrListener.onAppNotResponding(error);
+            interval = _timeoutInterval;
+            _reported = true;
+        }
+    }
+}
+```
+
+核心代码非常简洁，基本上就是上面方案的实现了。有一点需要补充的是，需要进一步从系统服务获取相关数据（可通过ActivityManagerService.getProcessesInErrorState()方法获取进程的ANR信息，具体实现方式下面会详细说明），进一步判定是否真的发生了ANR。可以自定义一个`_anrInterceptor`，在里面实现这些内容。
+
+### <span id="head12">6.2 监控SIGQUIT信号</span>
+
+这种方案才是真正的监控ANR，matrix、xCrash都在使用这种方案。已经在国民应用微信等app上检验过，稳定性和可靠性都能得到保证。
 
 在文章上面的ANR流程分析中，我们找到了系统与发生ANR进程之间的边界（即下图中的1和2）。我们能否监听到系统发送给我们的SIGQUIT信号呢？答案当然是可行的。
 
-todo xfhy 处理图片
-
-![Untitled](ANR%E7%BA%BF%E4%B8%8A%E7%9B%91%E6%8E%A7%E5%AD%A6%E4%B9%A0%E8%AE%A1%E5%88%92%20fa2cf0285c13446bad967cededcaacc1/Untitled.png)
+![ANR流程示意图](https://raw.githubusercontent.com/xfhy/Android-Notes/master/Images/ANR流程示意图.png)
 
 这里需要一点预备知识，首先我们得知道什么是SIGQUIT信号，前面我们提到了除Zygote进程以外的其他进程都有个Signal Catcher线程在不断地通过sigwait监听SIGQUIT信号，当收到SIGQUIT信号时开始dump线程堆栈。我们需要拦截或者监听SIGQUIT信号，首先需要了解信号处理的相关函数，如kill、signal、sigaction、sigwait、`pthread_sigmask`等，本文就不详细展开这些函数的具体使用了，如需详细了解，推荐阅读《UNIX环境高级编程》。
 
@@ -600,11 +703,11 @@ tgkill(getpid(), tid, SIGQUIT);
 
 以上，咱们得到了一个不改变系统行为的前提下，比较完善的监控SIGQUIT信号的机制，虽然不是特别完美，但这是监控ANR的基础。接下来我们慢慢完善。
 
-#### 完善的ANR监控方案
+#### <span id="head13">6.2.1 完善的ANR监控方案</span>
 
 监控到SIGQUIT信号并不等于就监控到了ANR。
 
-##### 误报
+##### <span id="head14">6.2.1.1 误报</span>
 
 **发生ANR的进程一定会收到SIGQUIT信号；但是收到SIGQUIT信号的进程并不一定发生了ANR。**
 
@@ -681,7 +784,7 @@ private static boolean checkErrorState() {
 
 > ps: 你可能会想，有这么方便的方法，监控SIGQUIT信号不是多余么？我直接搞个死循环，不断监听该flag，一旦发现不就监控到ANR了么？可以是可以，但不优雅，而且有缺陷（低效、耗电、不环保、无法解决下面提到的漏报问题）。
 
-##### 漏报
+##### <span id="head15">6.2.1.2 漏报</span>
 
 **进程处于`NOT_RESPONDING`的状态可以确认该进程发生了ANR。但是发生ANR的进程并不一定会被设置为`NOT_RESPONDING`状态**
 
@@ -720,7 +823,7 @@ private static boolean isMainThreadStuck(){
 
 通过上面几种机制来综合判断收到SIGQUIT信号后，是否真的发生了一次ANR，最大程度地减少误报和漏报。
 
-##### 获取ANR Trace
+##### <span id="head16">6.2.1.3 获取ANR Trace</span>
 
 回到上面的ANR流程示意图，Signal Catcher线程写Trace也是一个边界，它是通过socket的write方法来写trace的。那我们可以直接hook这里的write，就能直接拿到系统dump的ANR Trace内容。这个内容非常全面，包括了所有线程的各种状态、锁和堆栈（包括native堆栈），对于我们排查问题十分有用，尤其是一些native问题和死锁等问题。native hook采用PLT Hook方案，稳得很，这种方案已经在微信上验证了其稳定性。
 
@@ -783,17 +886,13 @@ void hookAnrTraceWrite() {
 
 到此，matrix监控SIGQUIT信号从而监控ANR的方案的核心逻辑已全部呈现，更多详细源码请[移步matrix仓库](https://github.com/Tencent/matrix/tree/master/matrix/matrix-android/matrix-trace-canary/src/main)。
 
-## ANR分析
+**总结一下，该方案通过去监听SIGQUIT信号，从而感知当前进程可能发生了ANR，需配合当前进程是否处于`NOT_RESPONDING`状态以及主线程是否卡顿来进行甄别，以免误判。注册监听SIGQUIT信号之后，系统原来的Signal Catcher线程就监听不到这个信号了，需要把该信号转发出去，让它接收到，以免影响。当前进程的Signal Catcher线程要dump堆栈的时候，会通过socket的write向system server进程进行传输dump好的数据，我们可以hook这个write，从而拿到系统dump好的ANR Trace内容，相当于我们并没有影响系统的任何流程，还拿到了想要拿到的东西。这个方案完全是在系统的正常dump anr trace的过程中获取信息，所以能拿到的东西更加全面，但是系统的dump过程其实是对性能影响比较大的，时间也比较久。**
 
-https://juejin.cn/post/6973564044351373326#heading-34
+## <span id="head17">7. ANR分析</span>
 
-todo xfhy https://www.jianshu.com/p/487771a67d1b
+监控固然重要，更重要的是分析是什么原因导致的ANR，然后修复好。
 
-todo xfhy 干货：ANR日志分析全面解析  https://zhuanlan.zhihu.com/p/378902923
-
-需记录：
-
-### trace文件分析
+### <span id="head18">7.1 trace文件分析</span>
 
 拿到trace文件，详细分析下：
 
@@ -902,9 +1001,7 @@ trace参数详细解读：
 - tid：线程内部id
 - 线程状态：Runnable
 
-todo xfhy 图片
-
-![ANR线程状态对照表](https://upload-images.jianshu.io/upload_images/14110520-30258e2439e8fd3c.png?imageMogr2/auto-orient/strip|imageView2/2/w/1200/format/webp)
+![ANR线程状态对照表](https://raw.githubusercontent.com/xfhy/Android-Notes/master/Images/IPe7kX.jpg)
 
 > ps: 一般来说：main线程处于BLOCK、WAITING、TIMEWAITING状态，基本上是函数阻塞导致的ANR，如果main线程无异常，则应该排查CPU负载和内存环境。
 
@@ -951,9 +1048,9 @@ todo xfhy 图片
 
 - mutex：所持有mutex类型，有独占锁exclusive和共享锁shared两类
 
-### ANR案例分析
+### <span id="head19">7.2 ANR案例分析</span>
 
-#### 主线程无卡顿，处于正常状态堆栈
+#### <span id="head20">7.2.1 主线程无卡顿，处于正常状态堆栈</span>
 
 ```log
 "main" prio=5 tid=1 Native
@@ -986,7 +1083,7 @@ todo xfhy 图片
 
 遇到这种情况，要先去分析CPU、内存的使用情况。其次可以关注抓取日志的时间和ANR发生的时间是否相隔太久，时间太久这个堆栈就没有分析的意义了。
 
-#### 主线程执行耗时操作
+#### <span id="head21">7.2.2 主线程执行耗时操作</span>
 
 ```kotlin
 //模拟主线程耗时操作,View点击的时候调用这个函数
@@ -1029,7 +1126,7 @@ DALVIK THREADS (16):
 
 从日志上看，主线程处于执行状态，不是空闲状态，导致ANR了，说明`com.xfhy.watchsignaldemo.MainActivity.makeAnr`这里有耗时操作。
 
-#### 主线程被锁阻塞
+#### <span id="head22">7.2.3 主线程被锁阻塞</span>
 
 模拟主线程等待子线程的锁：
 
@@ -1111,7 +1208,7 @@ fun makeAnr(view: View) {
 
 主线程的tid是1，线程状态是Blocked，正在等待`0x0c6f8c52`这个Object，而这个Object被thread 22这个线程所持有，主线程当前持有的是`0x01abeb23`的锁。而`卧槽`的tid是22，也是Blocked状态，它想请求的和已有的锁刚好与主线程相反。这样的话，ANR原因也就找到了：线程22持有了一把锁，并且一直不释放，主线程等待这把锁发生超时。在线上环境，常见因锁而ANR的场景是SharePreference写入。
 
-#### CPU被抢占
+#### <span id="head23">7.2.4 CPU被抢占</span>
 
 ```log
 CPU usage from 0ms to 10625ms later (2020-03-09 14:38:31.633 to 2020-03-09 14:38:42.257):
@@ -1123,7 +1220,7 @@ CPU usage from 0ms to 10625ms later (2020-03-09 14:38:31.633 to 2020-03-09 14:38
 
 可以看到，该进程占据CPU高达543%，抢占了大部分CPU资源，因为导致发生ANR，这种ANR与我们的app无关。
 
-#### 内存紧张导致ANR
+#### <span id="head24">7.2.5 内存紧张导致ANR</span>
 
 如果一份ANR日志的CPU和堆栈都很正常，可以考虑是内存紧张。看一下ANR日志里面的内存相关部分。还可以去日志里面搜一下onTrimMemory，如果dump ANR日志的时间附近有相关日志，可能是内存比较紧张了。
 
@@ -1135,7 +1232,7 @@ CPU usage from 0ms to 10625ms later (2020-03-09 14:38:31.633 to 2020-03-09 14:38
 10-31 22:39:02.816 20733 20733 E Runtime : onTrimMemory level:80,pid:com.xxx.xxx:Launcher0
 ```
 
-#### 系统服务超时导致ANR
+#### <span id="head25">7.2.6 系统服务超时导致ANR</span>
 
 系统服务超时一般会包含BinderProxy.transactNative关键字，来看一段日志：
 
@@ -1176,20 +1273,53 @@ CPU usage from 0ms to 10625ms later (2020-03-09 14:38:31.633 to 2020-03-09 14:38
 
 如果有发现某个线程的堆栈，包含此字样，可进一步看其堆栈，确定是调用了什么系统服务。此类ANR也是属于系统环境的问题，如果某类型手机上频繁发生此问题，应用层可以考虑规避策略。
 
-## QA
+## <span id="head26">8. ANR影响因素</span>
 
-### 在Activity#onCreate中sleep会导致ANR吗？
+即使我们利用上面的一系列骚操作，在发生ANR时，我们拿到了Trace堆栈。但实际情况下这些Trace堆栈中，有很多不是导致ANR的根本原因。Trace堆栈提示某个Service或Receiver导致的ANR，但其实很可能并不是这些组件自身的问题导致的ANR，至于为什么，下面一一道来。
 
-## 安排
+**影响ANR的本质要素大体来说分为2个：应用内部环境和系统环境。当系统负载正常，但是应用内部主线程消息过多或耗时验证；另外一类是系统或应用内部其他线程或资源负载过高，主线程调度被严重抢占。**
 
-- 今日头条 ANR 优化实践系列 - 设计原理及影响因素 https://mp.weixin.qq.com/s?__biz=MzI1MzYzMjE0MQ==&mid=2247488116&idx=1&sn=fdf80fa52c57a3360ad1999da2a9656b&chksm=e9d0d996dea750807aadc62d7ed442948ad197607afb9409dd5a296b16fb3d5243f9224b5763&token=569762407&lang=zh_CN&scene=21#wechat_redirect
-- 今日头条 ANR 优化实践系列 - 监控工具与分析思路 https://mp.weixin.qq.com/s/_Z6GdGRVWq-_JXf5Fs6fsw
-- 西瓜视频稳定性治理体系建设三：Sliver 原理及实践https://mp.weixin.qq.com/s/LW3eMK9O2tfFtZcu5eqitg （这篇文章提到，looper消息分发和监控Signal信号有可能无法监控到真正的ANR，可能dump堆栈时已经错过真正的时机，需要获取到dump堆栈时的前面的消息堆栈，好像matrix有，到时看一下）  补充一下博客，完善
-- 今日头条 ANR 优化实践系列分享 - 实例剖析集锦 https://mp.weixin.qq.com/s/4-_SnG4dfjMnkrb3rhgUag
-- 干货：ANR日志分析全面解析  https://zhuanlan.zhihu.com/p/378902923
-- Android ANR https://www.jianshu.com/p/487771a67d1b
+系统负载高咱们没有办法，但系统负载正常时，主线程的调度问题主要有下面几个：
 
-## 资料
+1. 当前Trace堆栈所在业务耗时严重
+2. 当前Trace堆栈所在业务耗时并不严重，但历史调度有一个严重耗时
+3. 当前Trace堆栈所在业务耗时并不严重，但历史调度有多个消息耗时
+4. 当前Trace堆栈所在业务耗时并不严重，但是历史调度存在巨量重复消息（业务频繁发送消息）
+5. 当前Trace堆栈业务逻辑并不耗时，但是其他线程存在严重资源抢占，如IO、Mem、CPU；
+6. 当前Trace堆栈业务逻辑并不耗时，但是其他进程存在严重资源抢占，如IO、Mem、CPU。
+
+请注意，这里的6个影响因素中，除了第一个以外，其他的根据ANR Trace有可能无法进行判别。这就会导致很多时候看到的ANR Trace里面主线程堆栈对应的业务其实并不耗时（因为可能是前面的消息导致的耗时，但它已经执行完了），如何解决这个问题？
+
+## <span id="head27">9. 弥补不足</span>
+
+字节跳动内部有一个监控工具：Raster，这个库专门解决上面的问题。有一点可惜的是该工具暂时还没开源，但是我们从字节发出来的Raster原理相关的文章能了解到该库的详细原理。[原文 : 今日头条 ANR 优化实践系列 - 监控工具与分析思路](https://mp.weixin.qq.com/s/_Z6GdGRVWq-_JXf5Fs6fsw)
+
+Raster的大致原理：该工具主要是在主线程消息调度过程进行监控，并按照一定的策略聚合，以保证监控工具本身对应用性能和内存抖动影响降至最低。比较耗时的消息会抓取主线从堆栈，这样可以知道那个耗时的消息具体是在干什么，从而针对性优化。同时对应用四大组件消息执行过程进行监控，便于对这类消息的调度及耗时情况进行跟踪和记录。另外对当前正在调度的消息及消息队列中待调度消息进行统计，从而在发生问题时，可以回放主线程的整体调度情况。此外，该库将系统服务的CheckTime机制迁移到应用侧，应用为线程CheckTime机制，以便于系统信息不足时，从线程调度及时性推测过去一段时间系统负载和调度情况。因此该工具用一句话来概括就是：由点到面，回放过去，现在和将来。 
+
+细说一下线程 Checktime：通过借助其他子线程的周期检测机制，在每次调度前获取当前系统时间，然后减去我们设置延迟的时间，即可得到本次线程调度前的真实间隔时间，如设置线程每隔300ms调度一次，结果发现实际响应时间间隔有时会超过300ms，如果偏差越大则说明线程没有及时调度，进一步反映系统响应能力变差。通过这样的方式，即使线上环境获取不到系统日志，也可以从侧面反映不同时段系统负载对线程调度影响。当连续发生多次严重Delay时，说明线程调度受到了影响。
+
+通过上诉监控能力，我们就可以清晰的知道ANR发生时主线程历史消息调度以及耗时严重消息的采样堆栈，同时可以知道正在执行消息的耗时，以及消息队列中调度消息的状态。同时通过线程CheckTime机制从侧面反映线程调度响应能力，由此完成了应用侧监控信息从点到面的覆盖。
+
+> 有大佬根据该文章的原理实现了一个类似的开源库： MoonlightTreasureBox，[MoonlightTreasureBox 开源地址](https://github.com/xiaolutang/MoonlightTreasureBox)。
+
+## <span id="head28">10. QA</span>
+
+### <span id="head29">10.1 在Activity#onCreate中sleep会导致ANR吗？</span>
+
+不会，ANR的场景只有下面4种：Service Timeout、BroadcastQueue Timeout、ContentProvider Timeout、InputDispatching Timeout。
+
+> 当然，如果在Activity#onCreate中sleep的过程中，用户点击了屏幕，那是有可能触发InputDispatching Timeout的。
+
+## <span id="head30">11. 小结</span>
+
+很荣幸地恭喜你，读完了整篇文章。
+
+ANR是老生常谈的问题了，本文从定义、原因、发生场景、触发流程、监控与分析等多方面入手，尽力补全ANR这块的知识。
+
+ANR的发生场景只有4种：Service Timeout、BroadcastQueue Timeout、ContentProvider Timeout、InputDispatching Timeout，但导致ANR的原因是多种多样的，可能是App这边导致的，也可能是系统那边导致的。触发ANR的过程大致又可以分为2种，一种是Service、Broadcast、Provider触发ANR：埋炸弹、拆炸弹、引爆炸弹，另外一种是Input触发ANR：处理后续时检测之前的。触发ANR之后，会走dump ANR Trace的流程，收集相关进程的堆栈信息写入文件。我们可以监听SIGQUIT信号，感知到系统在走dump ANR Trace的流程，我们可以进一步确认一下当前进程是否处于ANR的状态，然后通过hook系统与App的边界，从而通过socket拿到系统dump好的ANR Trace内容。拿到ANR Trace内容之后，当然就是分析了，详细请看文章。但是有时候，拿到的ANR Trace并不能把真正的ANR原因给分析出来，这时就得上字节内部的大杀器了：Raster，虽然暂时还没开源，但字节已将其原理一五一十的分享出来了。Raster主要是能知道主线程的消息调度在过去、现在、将来的具体情况，配合线程 CheckTime 感知线程调度能力，要比单单分析 ANR Trace要方便很多。
+
+
+感谢以下所有大佬的精彩文章。
 
 - 卡顿、ANR、死锁，线上如何监控？ https://juejin.cn/post/6973564044351373326#heading-34
 - 你管这破玩意叫 IO 多路复用？https://mp.weixin.qq.com/s?__biz=Mzk0MjE3NDE0Ng==&mid=2247494866&idx=1&sn=0ebeb60dbc1fd7f9473943df7ce5fd95&chksm=c2c5967ff5b21f69030636334f6a5a7dc52c0f4de9b668f7bac15b2c1a2660ae533dd9878c7c&mpshare=1&scene=1&srcid=04239yXVUr6ekmLg7ZSKlFpa&sharer_sharetime=1619147468052&sharer_shareid=2498540345d210ebc4198a40ae94e9ec#rd
