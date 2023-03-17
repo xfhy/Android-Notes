@@ -85,7 +85,7 @@ private int postSyncBarrier(long when) {
 - 屏障和普通消息一样可以根据时间来插入到消息队列中的适当位置，并且只会挡住它后面的同步消息的分发
 - postSyncBarrier会返回一个token，利用这个token可以撤销屏障
 - postSyncBarrier是hide的，使用它得用反射
-- 插入普通消息会唤醒消息对了，但插入屏障不会
+- 插入普通消息会唤醒消息队列，但插入屏障不会
 
 现在屏障已经插入到消息队列中了，它是如何挡住普通消息而只需要异步消息进行执行的呢？Looper是通过MessageQueue的next方法来获取消息的，来看看
 
