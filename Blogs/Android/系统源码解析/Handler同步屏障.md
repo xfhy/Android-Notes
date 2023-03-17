@@ -103,7 +103,7 @@ Message next() {
             final long now = SystemClock.uptimeMillis();
             Message prevMsg = null;
             Message msg = mMessages;
-            //遇到屏障  它的target是空的
+            //遇到屏障  它的target是空的，则去取第一个异步消息
             if (msg != null && msg.target == null) {
                 //找出屏障后面的异步消息，
                 do {
@@ -113,7 +113,7 @@ Message next() {
                 } while (msg != null && !msg.isAsynchronous());
             }
             
-            //如果找到了异步消息
+            //取到的消息可能为普通消息 或者 异步消息
             if (msg != null) {
                 if (now < msg.when) {
                     //还没到处理时间，再等一会儿
@@ -131,7 +131,7 @@ Message next() {
                     return msg;
                 }
             } else {
-                //如果没有异步消息就一直休眠，等待被唤醒
+                //如果没有消息就一直休眠，等待被唤醒
                 nextPollTimeoutMillis = -1;
             }
             ...
@@ -141,7 +141,7 @@ Message next() {
 }
 ```
 
-在MessageQueue中取下一个消息时，如果遇到屏障，就遍历消息队列，取最近的一个异步消息，然后返回出去。如果没有异步消息，则一直休眠在那里，等待着被唤醒。
+在MessageQueue中取下一个消息时，如果遇到屏障，就遍历消息队列，取最近的一个异步消息，没有屏障则取第一个普通消息，然后返回出去。如果没有消息，则一直休眠在那里，等待着被唤醒。
 
 ### <span id="head3">3. 发送异步消息</span>
 
