@@ -192,7 +192,7 @@ boolean enqueueMessage(Message msg, long when) {
                     needWake = false;
                 }
             }
-            //把新的消息插入在链表尾部
+            //把新的消息插入在链表中
             msg.next = p; // invariant: p == prev.next
             prev.next = msg;
         }
