@@ -145,6 +145,7 @@
 - [卡顿监控](/Blogs/Android/实战常见问题/卡顿监控.md)
 - [ANR 触发、监控、分析 一网打尽](/Blogs/Android/实战常见问题/ANR触发、监控、分析一网打尽.md)
 - [Android App Bundle](/Blogs/Android/实战常见问题/AndroidAppBundle.md)
+- [R文件详细介绍、瘦身方案和原理](/Blogs/Android/实战常见问题/R文件详细介绍、瘦身方案和原理.md)
 
 ### Gradle
 
