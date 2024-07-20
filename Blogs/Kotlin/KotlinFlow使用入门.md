@@ -537,6 +537,16 @@ class KotlinFlowViewModel : ViewModel() {
         .build()
     val api = retrofit.create(WanAndroidService::class.java)
 
+    // 合适的方式
+    val wxData = flow {
+        val response = api.listRepos()
+        emit(response)
+    }.catch {
+        log("出错了 $it")
+        emit(null)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), null)
+
+    // 不太合适的方式
     fun getWxData(): Flow<WxList?> = flow {
         val response = api.listRepos()
         emit(response)
@@ -550,7 +560,7 @@ class KotlinFlowViewModel : ViewModel() {
 // Activity
 lifecycleScope.launch {
     lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
-        flowViewModel.getWxData().collect { newData ->
+        flowViewModel.wxData.collect { newData ->
             Log.d("xfhy666", "getWxData ${newData?.data?.getOrNull(0)?.name}")
             tv_data.text = newData?.data?.getOrNull(0)?.name ?: "没获取到数据"
         }
@@ -558,7 +568,7 @@ lifecycleScope.launch {
 }
 ```
 
-我在获取网络数据之后使用了stateIn，将上游的Flow转换为StateFlow，将数据暂存到StateFlow中，然后在Activity中进行collect收集数据，进行ui展示。使用方式和LiveData类似。
+我在获取网络数据之后使用了stateIn，将上游的Flow转换为StateFlow，将数据暂存到StateFlow中，然后在Activity中进行collect收集数据，进行ui展示。使用方式和LiveData类似。请注意，我这里使用了两种方式来进行网络请求，一种是用方法，一种是定义变量的形式。我更推荐使用变量的形式，因为使用上面那种方法的形式时，每次调用该方法都会重新创建一个新的Flow，重新进行网络请求，有点浪费资源。而定义成属性变量的那种形式，不管collect多少次，都只会请求一次网络。
 
 ### 4.2 与Room结合使用
 
@@ -1178,7 +1188,7 @@ LiveData仍然是Java项目、Android初学者、简单场景下的最佳选择�
 *   [x] Lessons learnt using Coroutines Flow in the Android Dev Summit 2019 app https://medium.com/androiddevelopers/lessons-learnt-using-coroutines-flow-4a6b285c0d06
 *   [x] A safer way to collect flows from Android UIs https://medium.com/androiddevelopers/a-safer-way-to-collect-flows-from-android-uis-23080b1f8bda
 *   [x] Migrating from LiveData to Kotlin’s Flow  https://medium.com/androiddevelopers/migrating-from-livedata-to-kotlins-flow-379292f419fb
-*   [ ] Kotlin协程之Flow使用(一)  <https://juejin.cn/post/7034381227025465375/>
+*   [x] Kotlin协程之Flow使用(一)  <https://juejin.cn/post/7034381227025465375/>
 *   [ ] Kotlin协程之Flow使用(二)  <https://juejin.cn/post/7046155761948295175/>
 *   [ ] Kotlin协程之Flow使用(三)  <https://juejin.cn/post/7046156485407014920/>
 *   [ ] 20 | Flow：为什么说Flow是“冷”的？ <https://time.geekbang.org/column/article/491632>
