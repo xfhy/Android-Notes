@@ -206,12 +206,6 @@
 - #### CSDN: [https://blog.csdn.net/xfhy_](https://blog.csdn.net/xfhy_)
 - #### 掘金: [https://juejin.cn/user/2189882892500894](https://juejin.cn/user/2189882892500894)
 
-我的公众号 `xfhy` ，不局限于分享技术，欢迎扫描关注~
-
-<div align="center">
-<img src="https://raw.githubusercontent.com/xfhy/Android-Notes/master/Images/xfhy%E5%85%AC%E4%BC%97%E5%8F%B7%E4%BA%8C%E7%BB%B4%E7%A0%81.jpg" width=30%>
-</div>
-
 ### License
 
 Copyright 2021 xfhy
